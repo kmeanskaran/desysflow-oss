@@ -1,0 +1,84 @@
+name: Checkpoints
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+
+jobs:
+  repo-checkpoints:
+    name: Repository Checkpoints
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate required open-source files
+        run: |
+          set -euo pipefail
+          test -f README.md
+          test -f LICENSE
+          test -f CODE_OF_CONDUCT.md
+          test -f CONTRIBUTING.md
+          test -f .env.example
+          test -d docs
+          test -f docs/getting-started.md
+          test -f docs/cli.md
+          test -f docs/architecture.md
+          test -f docs/examples.md
+          test -f docs/project-overview.md
+
+  backend-checkpoints:
+    name: Backend Checkpoints
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -e .
+
+      - name: Python compile check
+        run: |
+          python -m compileall \
+            agents api desysflow_cli graph rules schemas services templates utils main.py
+
+      - name: CLI help checkpoints
+        run: |
+          python -m desysflow_cli help
+          python -m desysflow_cli design --help
+          python -m desysflow_cli redesign --help
+          python -m desysflow_cli chat --help
+          python -m desysflow_cli history --help
+
+  frontend-checkpoints:
+    name: Frontend Checkpoints
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Install UI dependencies
+        working-directory: ui
+        run: npm ci
+
+      - name: Build UI
+        working-directory: ui
+        run: npm run build
