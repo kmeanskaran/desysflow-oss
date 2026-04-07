@@ -104,6 +104,38 @@ class DesignRequest(BaseModel):
         default="balanced",
         description="Diagram density style: minimal, balanced, detailed",
     )
+    provider: str = Field(
+        default="",
+        description="LLM provider override: openai, anthropic, or ollama",
+    )
+    model: str = Field(
+        default="",
+        description="Model name override. If empty, uses the default for the provider.",
+    )
+    api_key: str = Field(
+        default="",
+        description="Optional runtime API key override (OpenAI/Anthropic only).",
+    )
+    base_url: str = Field(
+        default="",
+        description="Optional runtime provider base URL override.",
+    )
+    role: str = Field(
+        default="",
+        description="Design role/persona, e.g. DevOps or Principal Architect.",
+    )
+    report_style: str = Field(
+        default="balanced",
+        description="Report depth style: minimal, balanced, detailed.",
+    )
+    cloud_target: str = Field(
+        default="local",
+        description="Cloud target preference: local, aws, gcp, azure, hybrid.",
+    )
+    search_mode: str = Field(
+        default="auto",
+        description="Web search preference: auto, on, off.",
+    )
 
 
 class DesignResponse(BaseModel):
@@ -185,6 +217,58 @@ class FollowUpRequest(BaseModel):
         default=True,
         description="If true, keeps existing core diagram structure and only applies incremental add/remove changes.",
     )
+    provider: str = Field(
+        default="",
+        description="LLM provider override: openai, anthropic, or ollama",
+    )
+    model: str = Field(
+        default="",
+        description="Model name override. If empty, uses the default for the provider.",
+    )
+    api_key: str = Field(
+        default="",
+        description="Optional runtime API key override (OpenAI/Anthropic only).",
+    )
+    base_url: str = Field(
+        default="",
+        description="Optional runtime provider base URL override.",
+    )
+    role: str = Field(
+        default="",
+        description="Design role/persona, e.g. DevOps or Principal Architect.",
+    )
+    report_style: str = Field(
+        default="balanced",
+        description="Report depth style: minimal, balanced, detailed.",
+    )
+    cloud_target: str = Field(
+        default="local",
+        description="Cloud target preference: local, aws, gcp, azure, hybrid.",
+    )
+    search_mode: str = Field(
+        default="auto",
+        description="Web search preference: auto, on, off.",
+    )
+
+
+class LLMCheckRequest(BaseModel):
+    """POST /health/llm-check request body."""
+    provider: str = Field(
+        default="",
+        description="Provider to validate: openai, anthropic, or ollama.",
+    )
+    model: str = Field(
+        default="",
+        description="Model to validate.",
+    )
+    api_key: str = Field(
+        default="",
+        description="API key for OpenAI/Anthropic checks.",
+    )
+    base_url: str = Field(
+        default="",
+        description="Provider base URL override for connectivity checks.",
+    )
 
 
 class FollowUpResponse(BaseModel):
@@ -202,6 +286,8 @@ class FollowUpResponse(BaseModel):
     non_technical_doc: Dict[str, Any] = Field(default_factory=dict)
     mermaid_code: str = Field(default="")
     excalidraw_diagram: Dict[str, Any] = Field(default_factory=dict)
+    hld_report: Dict[str, Any] = Field(default_factory=dict)
+    lld_report: Dict[str, Any] = Field(default_factory=dict)
     tech_stack: Dict[str, Any] = Field(default_factory=dict)
     cloud_infrastructure: Dict[str, Any] = Field(default_factory=dict)
     warnings: List[str] = Field(default_factory=list)

@@ -14,7 +14,6 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from api.routes import router
 from services.conversation_store import get_conversation_store
-from services.memory import memory_status
 from services.session_store import get_session_store
 
 # ---------------------------------------------------------------------------
@@ -63,4 +62,3 @@ async def startup_event() -> None:
     logger.info("Docs available at http://localhost:8000/docs")
     logger.info("Session store: %s", get_session_store().status())
     logger.info("Conversation store: %s", get_conversation_store().status())
-    logger.info("Mem0 status: %s", memory_status(probe=False))

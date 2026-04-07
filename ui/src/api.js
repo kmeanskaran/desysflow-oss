@@ -34,8 +34,32 @@ async function request(path, options = {}, timeoutMs = 600_000) {
   }
 }
 
+function loadModelConfig() {
+  try {
+    const raw = localStorage.getItem('desysflow_model')
+    return raw ? JSON.parse(raw) : null
+  } catch {
+    return null
+  }
+}
+
+export function getConfig() {
+  return request('/config', { method: 'GET', headers: {} }, 10_000)
+}
+
 export function checkHealth() {
   return request('/health', { method: 'GET', headers: {} }, 20_000)
+}
+
+export function checkModelConnection(modelConfig = {}) {
+  return request('/health/llm-check', {
+    method: 'POST',
+    body: JSON.stringify({
+      provider: modelConfig?.provider || '',
+      model: modelConfig?.model || '',
+      api_key: modelConfig?.apiKey || '',
+    }),
+  }, 25_000)
 }
 
 export function listConversations() {
@@ -50,13 +74,29 @@ export function deleteConversation(sessionId) {
   return request(`/conversations/${sessionId}`, { method: 'DELETE', headers: {} }, 20_000)
 }
 
-export function startDesignAsync(prompt, preferredLanguage = 'Python', diagramStyle = 'balanced') {
+export function startDesignAsync(
+  prompt,
+  preferredLanguage = 'Python',
+  diagramStyle = 'balanced',
+  role = 'DevOps',
+  reportStyle = 'balanced',
+  cloudTarget = 'local',
+  searchMode = 'auto',
+) {
+  const model = loadModelConfig()
   return request('/design/async', {
     method: 'POST',
     body: JSON.stringify({
       input: prompt,
       preferred_language: preferredLanguage,
       diagram_style: diagramStyle,
+      role,
+      report_style: reportStyle,
+      cloud_target: cloudTarget,
+      search_mode: searchMode,
+      provider: model?.provider || '',
+      model: model?.model || '',
+      api_key: model?.apiKey || '',
     }),
   })
 }
@@ -67,7 +107,12 @@ export function startFollowUpAsync(
   preferredLanguage = 'Python',
   diagramStyle = 'balanced',
   preserveCoreDiagram = true,
+  role = 'DevOps',
+  reportStyle = 'balanced',
+  cloudTarget = 'local',
+  searchMode = 'auto',
 ) {
+  const model = loadModelConfig()
   return request('/design/followup/async', {
     method: 'POST',
     body: JSON.stringify({
@@ -76,6 +121,13 @@ export function startFollowUpAsync(
       preferred_language: preferredLanguage,
       diagram_style: diagramStyle,
       preserve_core_diagram: preserveCoreDiagram,
+      role,
+      report_style: reportStyle,
+      cloud_target: cloudTarget,
+      search_mode: searchMode,
+      provider: model?.provider || '',
+      model: model?.model || '',
+      api_key: model?.apiKey || '',
     }),
   })
 }

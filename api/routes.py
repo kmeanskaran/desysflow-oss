@@ -12,6 +12,7 @@ import os
 import threading
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict
 
 from fastapi import APIRouter, HTTPException
@@ -37,12 +38,19 @@ from schemas.models import (
     DesignResponse,
     FollowUpRequest,
     FollowUpResponse,
+    LLMCheckRequest,
     ReviewRequest,
     ReviewResponse,
 )
 from services.conversation_store import get_conversation_store
-from services.llm import check_llm_status, get_critic_llm_config, get_llm_config, is_llm_available
-from services.memory import add_memory_messages, memory_status, search_memory
+from services.llm import (
+    check_llm_status,
+    clear_request_model_override,
+    get_critic_llm_config,
+    get_llm_config,
+    is_llm_available,
+    set_request_model_override,
+)
 from services.search import get_search_config
 from services.session_store import get_session_store
 from utils.critic import build_critic_summary
@@ -202,6 +210,18 @@ def _run_workflow_with_progress(
             if isinstance(node_payload, dict):
                 state.update(node_payload)
     return state
+
+
+def _apply_request_model_override(
+    provider: str = "",
+    model: str = "",
+    api_key: str = "",
+    base_url: str = "",
+) -> None:
+    if provider and model:
+        set_request_model_override(provider, model, api_key=api_key, base_url=base_url)
+    else:
+        clear_request_model_override()
 
 
 def _assistant_message(result: Dict[str, Any]) -> str:
@@ -371,17 +391,49 @@ def _build_reviser_state(
     }
 
 
+def _append_workspace_preferences(
+    text: str,
+    *,
+    role: str = "",
+    report_style: str = "",
+    cloud_target: str = "",
+    search_mode: str = "",
+) -> str:
+    details = []
+    if role.strip():
+        details.append(f"- Role: {role.strip()}")
+    if report_style.strip():
+        details.append(f"- Report depth: {report_style.strip()}")
+    if cloud_target.strip():
+        details.append(f"- Cloud target: {cloud_target.strip()}")
+    if search_mode.strip():
+        details.append(f"- Web search mode: {search_mode.strip()}")
+    if not details:
+        return text
+    return f"{text}\n\nWorkspace preferences:\n" + "\n".join(details)
+
+
+@router.get("/config")
+async def get_config() -> Dict[str, Any]:
+    """Serve desysflow.config.yml as JSON for the UI."""
+    import yaml  # noqa: local import to avoid hard dep at module level
+
+    config_path = Path(__file__).resolve().parent.parent / "desysflow.config.yml"
+    if not config_path.exists():
+        raise HTTPException(status_code=404, detail="desysflow.config.yml not found")
+    raw = config_path.read_text(encoding="utf-8")
+    return yaml.safe_load(raw)
+
+
 @router.get("/health")
 async def health_check() -> Dict[str, str]:
     """Health check endpoint."""
     llm_config = get_llm_config()
     critic_llm_config = get_critic_llm_config()
-    llm_status = check_llm_status()
+    llm_status = check_llm_status(probe=False)
     search_config = get_search_config()
     session_store_status = SESSION_STORE.status()
     conversation_store_status = CONVERSATION_STORE.status()
-    # Keep /health fast for the UI; avoid blocking dependency probes here.
-    mem0 = memory_status(probe=False)
     return {
         "status": "ok",
         "llm_status": llm_status.get("status", "unknown"),
@@ -394,8 +446,22 @@ async def health_check() -> Dict[str, str]:
         "session_store_status": session_store_status.get("status", "unknown"),
         "chat_db": conversation_store_status.get("db", "unknown"),
         "chat_cache_status": conversation_store_status.get("cache_status", "unknown"),
-        "memory_status": mem0.get("status", "unknown"),
     }
+
+
+@router.post("/health/llm-check")
+async def check_llm_runtime(request: LLMCheckRequest) -> Dict[str, str]:
+    """Run an explicit provider/model/auth connectivity probe."""
+    _apply_request_model_override(
+        provider=request.provider.strip().lower(),
+        model=request.model.strip(),
+        api_key=request.api_key.strip(),
+        base_url=request.base_url.strip(),
+    )
+    try:
+        return check_llm_status(probe=True)
+    finally:
+        clear_request_model_override()
 
 
 @router.get("/conversations", response_model=ConversationListResponse)
@@ -451,7 +517,7 @@ async def _run_design_async_operation(
     if not llm_available:
         llm_config = get_llm_config()
         warnings.append(
-            "Ollama is unreachable at "
+            f"{llm_config.provider} is unreachable at "
             f"{llm_config.base_url}. The workflow ran in fallback mode with template/default outputs."
         )
 
@@ -499,8 +565,6 @@ async def _run_design_async_operation(
         }
         SESSION_STORE.set(session_id, session_payload)
         _persist_conversation(session_id, session_payload)
-        add_memory_messages(session_id, chat_history)
-
         response = DesignResponse(
             session_id=session_id,
             diagram_style=diagram_style,
@@ -541,20 +605,14 @@ async def _run_followup_async_operation(
     preferred_language = request.preferred_language.strip() or "Python"
     diagram_style = request.diagram_style.strip().lower()
 
-    memory_hits = search_memory(request.session_id, message, limit=4)
     followup_prompt = build_followup_prompt(session, message)
-    if memory_hits:
-        followup_prompt = (
-            f"{followup_prompt}\n\nRetrieved long-term memory:\n"
-            + "\n".join(f"- {item}" for item in memory_hits[:4])
-        )
 
     llm_available = is_llm_available()
     warnings: list[str] = []
     if not llm_available:
         llm_config = get_llm_config()
         warnings.append(
-            "Ollama is unreachable at "
+            f"{llm_config.provider} is unreachable at "
             f"{llm_config.base_url}. The workflow ran in fallback mode with template/default outputs."
         )
 
@@ -617,8 +675,6 @@ async def _run_followup_async_operation(
         refreshed = SESSION_STORE.get(request.session_id)
         if refreshed:
             _persist_conversation(request.session_id, refreshed)
-        add_memory_messages(request.session_id, compacted_history[-4:])
-
         response = FollowUpResponse(
             session_id=request.session_id,
             diagram_style=diagram_style,
@@ -633,6 +689,8 @@ async def _run_followup_async_operation(
             non_technical_doc=non_technical_doc,
             mermaid_code=result.get("mermaid_code", ""),
             excalidraw_diagram=result.get("excalidraw_diagram", {}),
+            hld_report=result.get("hld_report", {}),
+            lld_report=result.get("lld_report", {}),
             tech_stack=result.get("tech_stack", {}),
             cloud_infrastructure=result.get("cloud_infrastructure", {}),
             warnings=warnings,
@@ -671,6 +729,13 @@ async def _run_followup_async_operation(
 async def design_system_async(request: DesignRequest) -> Dict[str, Any]:
     """Start async design orchestration and return operation id for progress polling."""
     user_input = request.input.strip()
+    user_input = _append_workspace_preferences(
+        user_input,
+        role=request.role,
+        report_style=request.report_style,
+        cloud_target=request.cloud_target,
+        search_mode=request.search_mode,
+    )
     preferred_language = request.preferred_language.strip() or "Python"
     diagram_style = request.diagram_style.strip().lower()
     if diagram_style not in {"minimal", "balanced", "detailed"}:
@@ -678,31 +743,59 @@ async def design_system_async(request: DesignRequest) -> Dict[str, Any]:
     if not user_input:
         raise HTTPException(status_code=400, detail="Input must not be empty")
 
-    operation_id = _create_operation("design", list(_ORCHESTRATION_STEPS))
-    asyncio.create_task(
-        _run_design_async_operation(
-            operation_id=operation_id,
-            user_input=user_input,
-            preferred_language=preferred_language,
-            diagram_style=diagram_style,
-        )
+    _apply_request_model_override(
+        provider=request.provider.strip().lower(),
+        model=request.model.strip(),
+        api_key=request.api_key.strip(),
+        base_url=request.base_url.strip(),
     )
-    return {"operation_id": operation_id, "status": "running"}
+
+    try:
+        operation_id = _create_operation("design", list(_ORCHESTRATION_STEPS))
+        asyncio.create_task(
+            _run_design_async_operation(
+                operation_id=operation_id,
+                user_input=user_input,
+                preferred_language=preferred_language,
+                diagram_style=diagram_style,
+            )
+        )
+        return {"operation_id": operation_id, "status": "running"}
+    finally:
+        clear_request_model_override()
 
 
 @router.post("/design/followup/async")
 async def design_followup_async(request: FollowUpRequest) -> Dict[str, Any]:
     """Start async follow-up orchestration and return operation id for progress polling."""
     message = request.message.strip()
+    message = _append_workspace_preferences(
+        message,
+        role=request.role,
+        report_style=request.report_style,
+        cloud_target=request.cloud_target,
+        search_mode=request.search_mode,
+    )
     diagram_style = request.diagram_style.strip().lower()
     if diagram_style not in {"minimal", "balanced", "detailed"}:
         raise HTTPException(status_code=400, detail="diagram_style must be one of: minimal, balanced, detailed")
     if not message:
         raise HTTPException(status_code=400, detail="Follow-up message must not be empty")
+    request.message = message
 
-    operation_id = _create_operation("followup", list(_ORCHESTRATION_STEPS))
-    asyncio.create_task(_run_followup_async_operation(operation_id=operation_id, request=request))
-    return {"operation_id": operation_id, "status": "running"}
+    _apply_request_model_override(
+        provider=request.provider.strip().lower(),
+        model=request.model.strip(),
+        api_key=request.api_key.strip(),
+        base_url=request.base_url.strip(),
+    )
+
+    try:
+        operation_id = _create_operation("followup", list(_ORCHESTRATION_STEPS))
+        asyncio.create_task(_run_followup_async_operation(operation_id=operation_id, request=request))
+        return {"operation_id": operation_id, "status": "running"}
+    finally:
+        clear_request_model_override()
 
 
 @router.post("/design", response_model=DesignResponse)
@@ -713,12 +806,26 @@ async def design_system(request: DesignRequest) -> DesignResponse:
     recommendations produced by the multi-step LangGraph pipeline.
     """
     user_input = request.input.strip()
+    user_input = _append_workspace_preferences(
+        user_input,
+        role=request.role,
+        report_style=request.report_style,
+        cloud_target=request.cloud_target,
+        search_mode=request.search_mode,
+    )
     preferred_language = request.preferred_language.strip() or "Python"
     diagram_style = request.diagram_style.strip().lower()
     if diagram_style not in {"minimal", "balanced", "detailed"}:
         raise HTTPException(status_code=400, detail="diagram_style must be one of: minimal, balanced, detailed")
     if not user_input:
         raise HTTPException(status_code=400, detail="Input must not be empty")
+
+    _apply_request_model_override(
+        provider=request.provider.strip().lower(),
+        model=request.model.strip(),
+        api_key=request.api_key.strip(),
+        base_url=request.base_url.strip(),
+    )
 
     logger.info("POST /design — input: %s", user_input[:120])
     llm_available = is_llm_available()
@@ -727,7 +834,7 @@ async def design_system(request: DesignRequest) -> DesignResponse:
 
     if not llm_available:
         warnings.append(
-            "Ollama is unreachable at "
+            f"{llm_config.provider} is unreachable at "
             f"{llm_config.base_url}. The workflow ran in fallback mode with template/default outputs."
         )
 
@@ -770,8 +877,6 @@ async def design_system(request: DesignRequest) -> DesignResponse:
         }
         SESSION_STORE.set(session_id, session_payload)
         _persist_conversation(session_id, session_payload)
-        add_memory_messages(session_id, chat_history)
-
         return DesignResponse(
             session_id=session_id,
             diagram_style=diagram_style,
@@ -800,6 +905,8 @@ async def design_system(request: DesignRequest) -> DesignResponse:
             status_code=500,
             detail=f"Workflow execution failed: {exc}",
         )
+    finally:
+        clear_request_model_override()
 
 
 @router.post("/design/critic", response_model=DesignCriticResponse)
@@ -820,7 +927,6 @@ async def run_design_critic(request: DesignCriticRequest) -> DesignCriticRespons
         )
 
     latest_result = dict(session.get("latest_result", {}) or {})
-    memory_hits = search_memory(request.session_id, request.focus or "architecture critic", limit=6)
     session_memory = session.get("memory", {}) or {}
     memory_summary = memory_to_markdown(session_memory)
     if len(memory_summary) > 1800:
@@ -836,11 +942,6 @@ async def run_design_critic(request: DesignCriticRequest) -> DesignCriticRespons
         markdown_payload = _build_design_markdown(session, working_latest, design_doc)
         if memory_summary.strip():
             markdown_payload = f"{markdown_payload}\n\n## Session Memory Summary\n{memory_summary}"
-        if memory_hits:
-            markdown_payload = (
-                f"{markdown_payload}\n\n## Retrieved Memory Context\n"
-                + "\n".join(f"- {item}" for item in memory_hits)
-            )
         payload = {
             "system_design_markdown": markdown_payload,
             "chat_history": session.get("chat_history", []),
@@ -948,8 +1049,6 @@ async def run_design_critic(request: DesignCriticRequest) -> DesignCriticRespons
     }
     SESSION_STORE.set(request.session_id, updated_payload)
     _persist_conversation(request.session_id, updated_payload)
-    add_memory_messages(request.session_id, updated_history[-2:])
-
     return DesignCriticResponse(
         session_id=request.session_id,
         critic_feedback=critic_feedback,
@@ -965,12 +1064,25 @@ async def run_design_critic(request: DesignCriticRequest) -> DesignCriticRespons
 async def design_followup(request: FollowUpRequest) -> FollowUpResponse:
     """Run a context-aware follow-up iteration for an existing session."""
     message = request.message.strip()
+    message = _append_workspace_preferences(
+        message,
+        role=request.role,
+        report_style=request.report_style,
+        cloud_target=request.cloud_target,
+        search_mode=request.search_mode,
+    )
     preferred_language = request.preferred_language.strip() or "Python"
     diagram_style = request.diagram_style.strip().lower()
     if diagram_style not in {"minimal", "balanced", "detailed"}:
         raise HTTPException(status_code=400, detail="diagram_style must be one of: minimal, balanced, detailed")
     if not message:
         raise HTTPException(status_code=400, detail="Follow-up message must not be empty")
+    _apply_request_model_override(
+        provider=request.provider.strip().lower(),
+        model=request.model.strip(),
+        api_key=request.api_key.strip(),
+        base_url=request.base_url.strip(),
+    )
 
     session = _ensure_live_session(request.session_id)
 
@@ -979,20 +1091,14 @@ async def design_followup(request: FollowUpRequest) -> FollowUpResponse:
 
     logger.info("POST /design/followup — session: %s", request.session_id)
 
-    memory_hits = search_memory(request.session_id, message, limit=4)
     followup_prompt = build_followup_prompt(session, message)
-    if memory_hits:
-        followup_prompt = (
-            f"{followup_prompt}\n\nRetrieved long-term memory:\n"
-            + "\n".join(f"- {item}" for item in memory_hits[:4])
-        )
 
     llm_available = is_llm_available()
     warnings: list[str] = []
     if not llm_available:
         llm_config = get_llm_config()
         warnings.append(
-            "Ollama is unreachable at "
+            f"{llm_config.provider} is unreachable at "
             f"{llm_config.base_url}. The workflow ran in fallback mode with template/default outputs."
         )
 
@@ -1049,8 +1155,6 @@ async def design_followup(request: FollowUpRequest) -> FollowUpResponse:
         refreshed = SESSION_STORE.get(request.session_id)
         if refreshed:
             _persist_conversation(request.session_id, refreshed)
-        add_memory_messages(request.session_id, compacted_history[-4:])
-
         return FollowUpResponse(
             session_id=request.session_id,
             diagram_style=diagram_style,
@@ -1065,6 +1169,8 @@ async def design_followup(request: FollowUpRequest) -> FollowUpResponse:
             non_technical_doc=non_technical_doc,
             mermaid_code=result.get("mermaid_code", ""),
             excalidraw_diagram=result.get("excalidraw_diagram", {}),
+            hld_report=result.get("hld_report", {}),
+            lld_report=result.get("lld_report", {}),
             tech_stack=result.get("tech_stack", {}),
             cloud_infrastructure=result.get("cloud_infrastructure", {}),
             warnings=warnings,
@@ -1099,6 +1205,8 @@ async def design_followup(request: FollowUpRequest) -> FollowUpResponse:
             status_code=500,
             detail=f"Follow-up execution failed: {exc}",
         )
+    finally:
+        clear_request_model_override()
 
 
 @router.post("/review", response_model=ReviewResponse)

@@ -32,17 +32,76 @@ This will:
 ./letsvibedesign check # model availability check
 ```
 
+Notes:
+- `./letsvibedesign` (without args) opens an interactive wizard with the same 5 modes.
+- `dev` runs both services and prints both URLs.
+- `cli` runs the simple one-shot `desysflow design` workflow.
+
 ## 3. Backend and UI URLs
 
 - API docs: `http://localhost:8000/docs`
 - UI: `http://localhost:5173`
 
-## 4. Configuration
+## 4. Basic CLI Usage
+
+Guided:
+
+```bash
+./letsvibedesign cli
+```
+
+Direct:
+
+```bash
+desysflow design --source . --out ./desysflow --project my-project
+desysflow redesign --source . --out ./desysflow --project my-project --focus "improve reliability"
+```
+
+## 5. Basic UI Usage
+
+Start the UI with the API:
+
+```bash
+./letsvibedesign dev
+```
+
+Then:
+- Open `http://localhost:5173`.
+- Configure the model from the gear icon.
+- Click `Check status`.
+- Enter a design prompt.
+- Use follow-up prompts to refine the existing design.
+
+## 6. Configuration
 
 Environment variables are stored in local `.env`. Typical keys:
-- `LLM_PROVIDER`
-- `LLM_MODEL`
-- `OLLAMA_BASE_URL`
+- `MODEL_PROVIDER`
+- `OLLAMA_MODEL`
+- `OLLAMA_TIMEOUT`
+- `OLLAMA_NUM_PREDICT`
+- `OPENAI_MODEL`
+- `ANTHROPIC_MODEL`
 - `OPENAI_API_KEY`
 - `ANTHROPIC_API_KEY`
 - `DESYSFLOW_STORAGE_ROOT`
+- `LLM_GUARDRAIL` — set to `true` to enable secret-leak detection on LLM output
+
+### Model Selection and Validation
+
+- CLI interactive:
+  - run `desysflow design` and choose provider/model
+  - for OpenAI/Anthropic, provide API key when prompted
+- CLI explicit flags:
+  - `--model-provider`, `--model`, `--api-key`
+- UI:
+  - use the setup modal (gear icon) to set provider/model/API key
+  - `Check status` performs a live provider check:
+    - OpenAI/Anthropic: auth + endpoint probe
+    - Ollama: local endpoint reachability + model presence
+
+### Config File
+
+Edit `desysflow.config.yml` in the project root to customize:
+- Available role personas, languages, cloud targets, styles
+- AI provider options and default models
+- Default values for CLI prompts

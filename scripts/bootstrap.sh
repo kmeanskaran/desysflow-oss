@@ -28,37 +28,40 @@ echo "Installing UI packages..."
 )
 
 provider_default="ollama"
-model_default="gpt-oss:20b-cloud"
-base_url_default="http://localhost:11434"
+ollama_model_default="gpt-oss:20b-cloud"
+openai_model_default="gpt-5.4"
+anthropic_model_default="claude-opus-4-6"
 
 printf "Model provider [ollama/openai/anthropic] (default: %s): " "$provider_default"
 read -r provider
 provider="${provider:-$provider_default}"
 
-model="$model_default"
-base_url="$base_url_default"
+llm_model="$ollama_model_default"
+ollama_model="$ollama_model_default"
+openai_model="$openai_model_default"
+anthropic_model="$anthropic_model_default"
 api_key=""
 
 case "$provider" in
   ollama)
-    printf "Ollama model (default: %s): " "$model_default"
-    read -r model
-    model="${model:-$model_default}"
-    printf "Ollama base URL (default: %s): " "$base_url_default"
-    read -r base_url
-    base_url="${base_url:-$base_url_default}"
+    printf "Ollama model (default: %s): " "$ollama_model_default"
+    read -r llm_model
+    llm_model="${llm_model:-$ollama_model_default}"
+    ollama_model="$llm_model"
     ;;
   openai)
-    printf "OpenAI model (default: gpt-5.4): "
-    read -r model
-    model="${model:-gpt-5.4}"
+    printf "OpenAI model (default: %s): " "$openai_model_default"
+    read -r llm_model
+    llm_model="${llm_model:-$openai_model_default}"
+    openai_model="$llm_model"
     printf "OpenAI API key: "
     read -r api_key
     ;;
   anthropic)
-    printf "Anthropic model (default: claude-opus-4-1-20250805): "
-    read -r model
-    model="${model:-claude-opus-4-1-20250805}"
+    printf "Anthropic model (default: %s): " "$anthropic_model_default"
+    read -r llm_model
+    llm_model="${llm_model:-$anthropic_model_default}"
+    anthropic_model="$llm_model"
     printf "Anthropic API key: "
     read -r api_key
     ;;
@@ -68,19 +71,38 @@ case "$provider" in
     ;;
 esac
 
+openai_api_key=""
+anthropic_api_key=""
+if [ "$provider" = "openai" ]; then
+  openai_api_key="$api_key"
+elif [ "$provider" = "anthropic" ]; then
+  anthropic_api_key="$api_key"
+fi
+
 cat > .env <<EOF
-DESYSFLOW_STORAGE_ROOT=./desysflow
+DESYSFLOW_STORAGE_ROOT=./.desflow
 CHAT_STORE_BACKEND=sqlite
-MEM0_ENABLED=false
-LLM_PROVIDER=$provider
-LLM_MODEL=$model
-OLLAMA_MODEL=$model
-OLLAMA_BASE_URL=$base_url
-OLLAMA_CRITIC_MODEL=$model
-OPENAI_MODEL=$model
-ANTHROPIC_MODEL=$model
-OPENAI_API_KEY=$api_key
-ANTHROPIC_API_KEY=$api_key
+CHAT_DB_PATH=
+SESSION_DB_PATH=
+DATABASE_URL=
+REDIS_URL=redis://localhost:6379/0
+CHAT_CACHE_TTL_SECONDS=60
+MODEL_PROVIDER=$provider
+OLLAMA_MODEL=$ollama_model
+OLLAMA_CRITIC_MODEL=$ollama_model
+OLLAMA_BASE_URL=http://localhost:11434
+OPENAI_MODEL=$openai_model
+OPENAI_CRITIC_MODEL=$openai_model
+OPENAI_API_KEY=$openai_api_key
+ANTHROPIC_MODEL=$anthropic_model
+ANTHROPIC_CRITIC_MODEL=$anthropic_model
+ANTHROPIC_API_KEY=$anthropic_api_key
+WEB_SEARCH_ENABLED=true
+WEB_SEARCH_MAX_RESULTS=5
+CRITIC_MAX_RUNS_PER_SESSION=3
+CRITIC_ITERATION_LIMIT=3
+CRITIC_PASS_MAX_RISK=45
+LLM_GUARDRAIL=true
 VITE_API_PROXY_TARGET=http://localhost:8000
 EOF
 

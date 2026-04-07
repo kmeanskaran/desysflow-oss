@@ -10,7 +10,7 @@ export default function HLDReport({ data }) {
     return (
         <div className="report fade-in">
             <div className="section-header">
-                <div className="section-header__icon section-header__icon--purple">📐</div>
+                <div className="section-header__icon">HLD</div>
                 <div className="section-header__text">
                     <h3>High-Level Design (HLD)</h3>
                     <p>For product engineers, architects, and engineering managers</p>
@@ -20,7 +20,7 @@ export default function HLDReport({ data }) {
             {/* System Overview */}
             {data.system_overview && (
                 <div className="report__block">
-                    <h4 className="report__block-title">🏛️ System Overview</h4>
+                    <h4 className="report__block-title">System Overview</h4>
                     <p className="report__block-text">{data.system_overview}</p>
                 </div>
             )}
@@ -28,7 +28,7 @@ export default function HLDReport({ data }) {
             {/* Components */}
             {data.components && data.components.length > 0 && (
                 <div className="report__block">
-                    <h4 className="report__block-title">🧩 Components</h4>
+                    <h4 className="report__block-title">Components</h4>
                     <div className="report__table-wrap">
                         <table className="report__table">
                             <thead>
@@ -55,7 +55,7 @@ export default function HLDReport({ data }) {
             {/* Data Flow */}
             {data.data_flow && data.data_flow.length > 0 && (
                 <div className="report__block">
-                    <h4 className="report__block-title">🔄 Data Flow</h4>
+                    <h4 className="report__block-title">Data Flow</h4>
                     <ol className="report__ordered-list">
                         {data.data_flow.map((step, i) => (
                             <li key={i}>{step}</li>
@@ -67,7 +67,7 @@ export default function HLDReport({ data }) {
             {/* Scaling Strategy */}
             {data.scaling_strategy && (
                 <div className="report__block">
-                    <h4 className="report__block-title">📈 Scaling Strategy</h4>
+                    <h4 className="report__block-title">Scaling Strategy</h4>
                     <p className="report__block-text">{data.scaling_strategy}</p>
                 </div>
             )}
@@ -75,7 +75,7 @@ export default function HLDReport({ data }) {
             {/* Availability */}
             {data.availability && (
                 <div className="report__block">
-                    <h4 className="report__block-title">🛡️ Availability & DR</h4>
+                    <h4 className="report__block-title">Availability and DR</h4>
                     <p className="report__block-text">{data.availability}</p>
                 </div>
             )}
@@ -83,7 +83,7 @@ export default function HLDReport({ data }) {
             {/* Trade-offs */}
             {data.trade_offs && data.trade_offs.length > 0 && (
                 <div className="report__block">
-                    <h4 className="report__block-title">⚖️ Trade-offs</h4>
+                    <h4 className="report__block-title">Trade-offs</h4>
                     <ul className="report__list">
                         {data.trade_offs.map((t, i) => (
                             <li key={i}>{t}</li>
@@ -95,7 +95,7 @@ export default function HLDReport({ data }) {
             {/* Estimated Capacity */}
             {data.estimated_capacity && Object.keys(data.estimated_capacity).length > 0 && (
                 <div className="report__block">
-                    <h4 className="report__block-title">📊 Estimated Capacity</h4>
+                    <h4 className="report__block-title">Estimated Capacity</h4>
                     <div className="report__metrics">
                         {Object.entries(data.estimated_capacity).map(([key, val]) => (
                             <div key={key} className="metric-card">

@@ -70,10 +70,27 @@ export default function LoadingState({ mode = 'design', operation = null }) {
     return `${minutes}:${remaining.toString().padStart(2, '0')}`
   }
 
+  const progressPercent = Number(operation?.progress_percent)
+  const progress = Number.isFinite(progressPercent)
+    ? Math.max(0, Math.min(100, progressPercent))
+    : Math.round(((activeStep + 1) / Math.max(steps.length, 1)) * 100)
+
   return (
     <div className="loading fade-in">
-      <p className="loading__title">{pipeline.title}</p>
-      <p className="loading__subtitle">{pipeline.subtitle}</p>
+      <div className="loading__header">
+        <div>
+          <p className="loading__title">{pipeline.title}</p>
+          <p className="loading__subtitle">{pipeline.subtitle}</p>
+        </div>
+        <div className="loading__meta">
+          <span className="loading__elapsed">Elapsed {formatTime(elapsed)}</span>
+          <span className="loading__percent">{progress}%</span>
+        </div>
+      </div>
+
+      <div className="loading__progress-track" role="progressbar" aria-valuenow={progress} aria-valuemin="0" aria-valuemax="100">
+        <div className="loading__progress-fill" style={{ width: `${progress}%` }} />
+      </div>
 
       <div className="loading__pipeline">
         {steps.map((step, index) => {
@@ -83,17 +100,19 @@ export default function LoadingState({ mode = 'design', operation = null }) {
 
           return (
             <div key={step.key} className={`loading__step loading__step--${status}`}>
-              <div className="loading__step-icon">{status === 'done' ? 'OK' : step.icon}</div>
+              <div className="loading__step-bullet">{status === 'done' ? '✓' : step.icon}</div>
               <span className="loading__step-label">{step.label}</span>
+              <span className={`loading__step-status loading__step-status--${status}`}>
+                {status === 'done' ? 'Done' : status === 'active' ? 'Running' : 'Queued'}
+              </span>
             </div>
           )
         })}
       </div>
 
       {operation?.current_step_label && (
-        <p className="loading__current-step">Current: {operation.current_step_label}</p>
+        <p className="loading__current-step">Active step: {operation.current_step_label}</p>
       )}
-      <p className="loading__elapsed">Elapsed: {formatTime(elapsed)}</p>
     </div>
   )
 }

@@ -5,6 +5,7 @@ import datetime as dt
 import difflib
 import json
 import os
+import re
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -12,8 +13,69 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 from services.storage_paths import get_storage_root
-from services.llm import check_llm_status, get_llm_config
+from services.llm import check_llm_status, get_llm_config, list_ollama_models
+from graph.workflow import run_workflow
+from utils.design_doc import build_system_design_doc
+from utils.non_technical_doc import build_non_technical_doc
+
+# Config loader
+_CONFIG_CACHE: dict[str, Any] | None = None
+
+
+def load_config() -> dict[str, Any]:
+    """Load desysflow.config.yml from the project root. Cached after first read."""
+    global _CONFIG_CACHE
+    if _CONFIG_CACHE is not None:
+        return _CONFIG_CACHE
+    config_path = Path(__file__).resolve().parent.parent / "desysflow.config.yml"
+    if config_path.exists():
+        with open(config_path, encoding="utf-8") as f:
+            _CONFIG_CACHE = yaml.safe_load(f) or {}
+    else:
+        _CONFIG_CACHE = {}
+    return _CONFIG_CACHE
+
+
+def cfg_list(key: str, fallback: list[str]) -> list[str]:
+    """Get a list from config, falling back to hardcoded default."""
+    val = load_config().get(key)
+    return list(val) if isinstance(val, list) and val else fallback
+
+
+def cfg_defaults() -> dict[str, str]:
+    """Get the defaults section from config."""
+    return load_config().get("defaults", {})
+
+
+def cfg_providers() -> list[dict[str, str]]:
+    """Get the providers list from config."""
+    val = load_config().get("providers")
+    return list(val) if isinstance(val, list) and val else [
+        {"id": "openai", "label": "GPT-lover", "default_model": "gpt-4o"},
+        {"id": "anthropic", "label": "Claude-lover", "default_model": "claude-sonnet-4-20250514"},
+        {"id": "ollama", "label": "Ollama-lover", "default_model": "gpt-oss:20b-cloud"},
+    ]
+
+
+def default_project_name(source: Path) -> str:
+    """Resolve the project folder name for versioned design outputs."""
+    configured = str(cfg_defaults().get("project", "")).strip()
+    if configured:
+        return configured
+    return "desysflow-cli" if source.name == "desysflow-oss" else source.name
+
+
+def default_output_root(base: Path | None = None) -> Path:
+    """Prefer an existing hidden output root, otherwise use the documented default."""
+    configured = os.getenv("DESYSFLOW_STORAGE_ROOT", "").strip()
+    if configured:
+        return Path(configured).expanduser()
+    root = base or Path.cwd()
+    hidden = root / ".desflow"
+    return hidden if hidden.exists() else root / "desysflow"
 
 SKIP_DIRS = {
     ".git",
@@ -24,6 +86,33 @@ SKIP_DIRS = {
     "build",
     "desysflow",
 }
+
+# Secret detection patterns — matched case-insensitively across all generated docs
+SECRET_PATTERNS = [
+    # Generic credentials
+    (r'(?i)\b(password|passwd|pwd|secret|token|api.?key|apikey)\s*[:=]\s*["\']?[\w\-\.%/@]{4,}["\']?', 0),
+    # Connection strings with embedded secrets
+    (r'(?i)(mongodb|postgres|mysql|redis|amqp|mssql|oracle):\/\/[^@\s]+:[^@\s]+@', 0),
+    # AWS / GCP / Azure tokens and keys
+    (r'(?i)\b(AKIA|ABIA|ACMA|ASIA)[0-9A-Z]{16}', 0),
+    (r'(?i)aws[_\-]?(access[_\-]?key[_\-]?id)\s*[:=]\s*\S+', 0),
+    (r'(?i)aws[_\-]?(secret[_\-]?access[_\-]?key)\s*[:=]\s*\S+', 0),
+    (r'(?i)amqp[_\-]?(login|password)\s*[:=]\s*\S+', 0),
+    (r'(?i)(gcp|google)[_\-]?(api[_\-]?key|service[_\-]?account)\s*[:=]\s*\S+', 0),
+    (r'(?i)azure[_\-]?(subscription|tenant|client)[_\-]?(id|key)\s*[:=]\s*\S+', 0),
+    (r'(?i)sk_[a-zA-Z0-9]{20,}', 0),                           # OpenAI / most LLM keys
+    (r'(?i)sk-ant-[a-zA-Z0-9]{20,}', 0),                       # Anthropic keys
+    (r'(?i)ollama[_\-]?(api[_\-]?key)\s*[:=]\s*\S+', 0),
+    # Bearer / Authorization tokens
+    (r'(?i)bearer\s+[a-zA-Z0-9_\-\.]{16,}', 0),
+    (r'(?i)authorization\s*[:=]\s*(Bearer |Basic )[^"\s]{4,}', 0),
+    # Private keys
+    (r'-----BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----', 0),
+    # Slack / GitHub tokens
+    (r'(?i)(slack|github)[_\-]?(token|key|secret)\s*[:=]\s*\S+', 0),
+    # Environment variable exports with values
+    (r'(?i)export\s+(OPENAI_|ANTHROPIC_|AWS_|AZURE_|GCP_|SECRET_|TOKEN_|API_KEY|PASSWORD)', 0),
+]
 TOP_FILE_LIMIT = 60
 REVIEW_LOOP_LIMIT = 2
 
@@ -33,6 +122,7 @@ HLD_REQUIRED_SECTIONS = [
     "## Data Flow",
     "## Scaling and Availability",
     "## Trade-offs",
+    "## Future Improvements",
 ]
 LLD_REQUIRED_SECTIONS = [
     "## APIs",
@@ -42,6 +132,7 @@ LLD_REQUIRED_SECTIONS = [
     "## Error Handling",
     "## Deployment",
     "## Security",
+    "## Future Improvements",
 ]
 TECH_REPORT_REQUIRED_SECTIONS = [
     "## Sub-agent Topology",
@@ -49,6 +140,7 @@ TECH_REPORT_REQUIRED_SECTIONS = [
     "## Internal Reviewer Loop",
     "## Context Bloat Fixes",
     "## Session Management and Memory",
+    "## Future Improvements",
 ]
 NON_TECH_REQUIRED_SECTIONS = [
     "## Product Summary",
@@ -72,7 +164,13 @@ class RunConfig:
     mode: str
     effective_mode: str
     focus: str
+    role: str
+    prompt: str
     non_interactive: bool
+    model_provider: str = ""   # openai | anthropic | ollama
+    model_name: str = ""       # provider-specific model name
+    api_key: str = ""           # for openai / anthropic
+    base_url: str = ""
 
 
 @dataclass
@@ -99,163 +197,163 @@ class HistoryConfig:
     limit: int
 
 
-def parse_run_args(command: str, argv: list[str] | None = None) -> RunConfig:
-    parser = argparse.ArgumentParser(
-        prog=f"desysflow {command.lstrip('/')}",
-        description=(
-            "Generate a versioned system-design package from a source repository."
-            if command == "/design"
-            else "Refine from the latest generated design package."
-        ),
-    )
-    parser.add_argument("--source", default=".", help="Source repository path to analyze.")
-    parser.add_argument(
-        "--out",
-        default="./desysflow",
-        help="Output root for generated design folders (default: ./desysflow).",
-    )
-    parser.add_argument("--project", default="", help="Project name override.")
-    parser.add_argument(
-        "--language",
-        choices=["python", "typescript", "go", "java", "rust"],
-        default="",
-        help="Preferred implementation language for the design package.",
-    )
-    parser.add_argument(
-        "--style",
-        choices=["minimal", "balanced", "detailed"],
-        default="",
-        help="Report depth style.",
-    )
-    parser.add_argument(
-        "--cloud",
-        choices=["local", "none", "aws", "gcp", "azure", "hybrid"],
-        default="",
-        help="Cloud deployment target for recommendations.",
-    )
-    parser.add_argument(
-        "--mode",
-        choices=["smart", "fresh", "refine"],
-        default="",
-        help="Routing mode for /design. Smart chooses fresh or refine from project state.",
-    )
-    parser.add_argument(
-        "--web-search",
-        choices=["auto", "on", "off"],
-        default="",
-        help="External web search mode. Auto enables only when useful.",
-    )
-    parser.add_argument("--focus", default="", help="Improvement goal for refine runs.")
-    parser.add_argument(
-        "--non-interactive",
-        action="store_true",
-        help="Skip option prompts and use defaults/flags.",
-    )
-
-    ns = parser.parse_args(argv)
-    cfg = RunConfig(
-        command=command,
-        source=Path(ns.source).expanduser().resolve(),
-        output_root=Path(ns.out).expanduser().resolve(),
-        project=ns.project.strip() or Path(ns.source).expanduser().resolve().name,
-        language=(ns.language or "").strip(),
-        style=ns.style.strip(),
-        cloud=ns.cloud.strip(),
-        web_search=ns.web_search.strip(),
-        mode=ns.mode.strip(),
-        effective_mode="",
-        focus=ns.focus.strip(),
-        non_interactive=bool(ns.non_interactive),
-    )
-    return finalize_options(cfg)
+# ----------------------------------------------------------------------
+# Help formatter — sorts flags alphabetically within each group
+# ----------------------------------------------------------------------
+class _SortedHelpFormatter(argparse.HelpFormatter):
+    def add_arguments(self, actions):
+        actions.sort(key=lambda a: (a.option_strings or [a.dest])[0])
+        super().add_arguments(actions)
 
 
-def parse_chat_args(argv: list[str] | None = None) -> ChatConfig:
-    parser = argparse.ArgumentParser(
-        prog="desysflow chat",
-        description="Start a terminal-first DesysFlow chat session.",
-    )
-    parser.add_argument("--source", default=".", help="Source repository path to analyze.")
-    parser.add_argument("--out", default="./desysflow", help="Storage root for local sessions and outputs.")
-    parser.add_argument("--project", default="", help="Project name override.")
-    parser.add_argument("--session", default="", help="Resume a specific local chat session id.")
-    ns = parser.parse_args(argv)
-    source = Path(ns.source).expanduser().resolve()
-    output_root = Path(ns.out).expanduser().resolve()
-    project = ns.project.strip() or source.name
-    return ChatConfig(source=source, output_root=output_root, project=project, session_id=ns.session.strip())
+# ----------------------------------------------------------------------
+# Model resolution helpers
+# ----------------------------------------------------------------------
+def _provider_defaults() -> dict[str, dict[str, str]]:
+    """Build provider → default model mapping from config."""
+    result: dict[str, dict[str, str]] = {}
+    for p in cfg_providers():
+        result[p["id"]] = {"model": p.get("default_model", "")}
+    return result
 
 
-def parse_history_args(argv: list[str] | None = None) -> HistoryConfig:
-    parser = argparse.ArgumentParser(
-        prog="desysflow history",
-        description="List local DesysFlow chat sessions.",
-    )
-    parser.add_argument("--out", default="./desysflow", help="Storage root for local sessions and outputs.")
-    parser.add_argument("--limit", type=int, default=20, help="Maximum number of sessions to show.")
-    ns = parser.parse_args(argv)
-    return HistoryConfig(output_root=Path(ns.out).expanduser().resolve(), limit=max(1, ns.limit))
-
-
-def print_main_help() -> None:
-    print("DesysFlow CLI")
+def _prompt_provider() -> str:
+    providers = cfg_providers()
     print("")
-    print("Usage:")
-    print("  desysflow chat [--source PATH] [--out PATH] [--project NAME] [--session ID]")
-    print("  desysflow design [options]")
-    print("  desysflow redesign [options]")
-    print("  desysflow history [--out PATH] [--limit N]")
-    print("  desysflow resume <session_id> [--source PATH] [--out PATH] [--project NAME]")
-    print("")
-    print("Commands:")
-    print("  chat       Start terminal chat mode with local session history")
-    print("  design     Generate a new versioned design package")
-    print("  redesign   Refine from latest version (falls back to fresh when needed)")
-    print("  history    List saved chat sessions")
-    print("  resume     Resume a chat session by id")
-    print("  help       Show this help")
-    print("")
-    print("Common design/redesign options:")
-    print("  --source PATH           Source repository (default: .)")
-    print("  --out PATH              Output root (default: ./desysflow)")
-    print("  --project NAME          Project name override")
-    print("  --language VALUE        python|typescript|go|java|rust")
-    print("  --style VALUE           minimal|balanced|detailed")
-    print("  --cloud VALUE           local|aws|gcp|azure|hybrid")
-    print("  --mode VALUE            smart|fresh|refine")
-    print("  --web-search VALUE      auto|on|off")
-    print("  --focus TEXT            Refinement goal")
-    print("  --non-interactive       Disable interactive prompts")
-    print("")
-    print("Examples:")
-    print("  desysflow design --source . --out ./desysflow --project my-app")
-    print("  desysflow redesign --source . --out ./desysflow --project my-app --focus \"improve scalability\"")
-    print("  desysflow chat")
-    print("  desysflow resume 3f8b2a7d9c1e")
-    print("")
-    print("Tip: run `desysflow <command> --help` for command-specific help.")
+    for i, p in enumerate(providers, 1):
+        print(f"  {i}) {p['label']}  ({p.get('desc', p['id'])})")
+    while True:
+        r = input(f"Select provider [1-{len(providers)}]: ").strip()
+        try:
+            idx = int(r) - 1
+            if 0 <= idx < len(providers):
+                return providers[idx]["id"]
+        except ValueError:
+            pass
+        print(f"  Invalid. Enter 1-{len(providers)}.")
+
+
+def _prompt_model(provider: str, installed: list[str]) -> str:
+    default = _provider_defaults().get(provider, {}).get("model", "")
+    if provider == "ollama":
+        if not installed:
+            print("  No Ollama models installed.")
+            print("  Install one first:  ollama pull <model>")
+            return ""
+        print(f"  Installed models: {', '.join(installed)}")
+        default = installed[0]
+    placeholder = f" (default: {default})" if default else ": "
+    name = input(f"  Model name{placeholder}").strip()
+    return name or default
+
+
+def _prompt_api_key(provider: str) -> str:
+    return input(f"  API key for {provider}: ").strip()
+
+
+def resolve_model(cfg: RunConfig) -> RunConfig:
+    """Resolve provider → model name → API key from CLI flag → env var → interactive prompt."""
+    interactive = (not cfg.non_interactive) and os.isatty(0)
+
+    # 1. Provider: CLI flag → env var → interactive
+    provider = cfg.model_provider or os.getenv("MODEL_PROVIDER", "").strip()
+    if not provider and interactive:
+        provider = _prompt_provider()
+    if not provider:
+        provider = "ollama"
+    provider = provider.lower()
+    if provider not in ("openai", "anthropic", "ollama"):
+        provider = "ollama"
+
+    # 2. API key: CLI flag → env var → prompt (openai/anthropic only)
+    env_key = "OPENAI_API_KEY" if provider == "openai" else "ANTHROPIC_API_KEY"
+    api_key = cfg.api_key or os.getenv(env_key, "").strip()
+    if provider != "ollama" and not api_key and interactive:
+        api_key = _prompt_api_key(provider)
+    if api_key:
+        os.environ[env_key] = api_key
+
+    # 3. Base URL: CLI flag → env var → provider default
+    base_url_env_key = "OPENAI_BASE_URL" if provider == "openai" else ("ANTHROPIC_BASE_URL" if provider == "anthropic" else "OLLAMA_BASE_URL")
+    base_url_default = (
+        "https://api.openai.com/v1" if provider == "openai"
+        else "https://api.anthropic.com" if provider == "anthropic"
+        else "http://localhost:11434"
+    )
+    base_url = cfg.base_url or os.getenv(base_url_env_key, "").strip() or base_url_default
+    os.environ[base_url_env_key] = base_url
+
+    # 4. Model name: CLI flag → env var → prompt → default
+    installed: list[str] = []
+    if provider == "ollama":
+        installed = list_ollama_models(base_url)
+
+    env_model_key = "OPENAI_MODEL" if provider == "openai" else ("ANTHROPIC_MODEL" if provider == "anthropic" else "OLLAMA_MODEL")
+    model = cfg.model_name or os.getenv(env_model_key, "").strip()
+    if not model and interactive:
+        model = _prompt_model(provider, installed)
+    if not model:
+        model = _provider_defaults().get(provider, {}).get("model", "")
+
+    # Ollama validation
+    if provider == "ollama" and model and model not in installed:
+        print(f"  [WARNING] '{model}' not in installed models at {base_url}.")
+        print("  Install it with:  ollama pull <model>")
+        if interactive:
+            confirm = input("  Continue anyway? [y/N]: ").strip().lower()
+            if confirm not in ("y", "yes"):
+                raise SystemExit("Aborted.")
+
+    os.environ["MODEL_PROVIDER"] = provider
+    os.environ[env_model_key] = model
+
+    cfg.model_provider = provider
+    cfg.model_name = model
+    cfg.api_key = api_key
+    cfg.base_url = base_url
+    return cfg
 
 
 def finalize_options(cfg: RunConfig) -> RunConfig:
     interactive = (not cfg.non_interactive) and os.isatty(0)
+
+    cfg = resolve_model(cfg)
+
+    if interactive:
+        print(f"  Provider : {cfg.model_provider}")
+        print(f"  Model    : {cfg.model_name}")
+        print(f"  API key  : {'[set]' if cfg.api_key else '[none]'}")
+        print("")
+
     project_root = cfg.output_root / cfg.project
     has_existing_design = any(
         child.is_dir() and child.name.startswith("v")
         for child in project_root.iterdir()
     ) if project_root.exists() else False
-    language = cfg.language or "python"
-    style = cfg.style or "balanced"
-    cloud = normalize_cloud(cfg.cloud or "local")
-    web_mode = cfg.web_search or "auto"
-    mode = cfg.mode or "smart"
+
+    defaults = cfg_defaults()
+    language = cfg.language or os.getenv("DESYSFLOW_LANGUAGE", "").strip() or defaults.get("language", "python")
+    style    = cfg.style    or os.getenv("DESYSFLOW_STYLE", "").strip()    or defaults.get("style", "balanced")
+    cloud    = cfg.cloud    or os.getenv("DESYSFLOW_CLOUD", "").strip()    or defaults.get("cloud", "local")
+    web      = cfg.web_search or os.getenv("DESYSFLOW_WEB_SEARCH", "").strip() or defaults.get("search_mode", "auto")
+    mode     = cfg.mode     or os.getenv("DESYSFLOW_MODE", "").strip()     or defaults.get("design_mode", "smart")
+    role     = cfg.role     or os.getenv("DESYSFLOW_ROLE", "").strip()     or defaults.get("role", "DevOps")
+    prompt   = cfg.prompt.strip()
 
     if interactive:
-        language = ask_option("Implementation language", ["python", "typescript", "go", "java", "rust"], language)
-        style = ask_option("Report style", ["balanced", "minimal", "detailed"], style)
-        cloud = normalize_cloud(ask_option("Cloud target", ["local", "aws", "gcp", "azure", "hybrid"], cloud))
-        web_mode = ask_option("Web search mode", ["auto", "on", "off"], web_mode)
+        language = _ask_choice("Implementation language", cfg_list("languages", ["python", "typescript", "go", "java", "rust"]), language)
+        style    = _ask_choice("Report style",          cfg_list("styles", ["balanced", "minimal", "detailed"]),          style)
+        cloud    = _ask_choice("Cloud target",          cfg_list("clouds", ["local", "aws", "gcp", "azure", "hybrid"]),   cloud)
+        web      = _ask_choice("Web search mode",       cfg_list("search_modes", ["auto", "on", "off"]),                   web)
+        role     = _ask_choice("Role",                  cfg_list("roles", ["DevOps", "Principal Architect", "MLOps / AIOps"]), role)
         if cfg.command == "/design" and has_existing_design:
-            mode = ask_option("Design routing", ["smart", "fresh", "refine"], mode)
+            mode = _ask_choice("Design routing",       cfg_list("design_modes", ["smart", "fresh", "refine"]),            mode)
+        input_mode = _ask_choice("Input mode", ["vibe-now", "ask"], "vibe-now")
+        if input_mode == "ask":
+            print("  Prompt (optional):")
+            entered_prompt = input("  > ").strip()
+            if entered_prompt:
+                prompt = entered_prompt
 
     effective_mode = resolve_effective_mode(cfg.command, mode, has_existing_design, cfg.focus)
 
@@ -267,27 +365,234 @@ def finalize_options(cfg: RunConfig) -> RunConfig:
         language=language,
         style=style,
         cloud=cloud,
-        web_search=web_mode,
+        web_search=web,
         mode=mode,
         effective_mode=effective_mode,
         focus=cfg.focus,
+        role=role,
+        prompt=prompt,
         non_interactive=cfg.non_interactive,
+        model_provider=cfg.model_provider,
+        model_name=cfg.model_name,
+        api_key=cfg.api_key,
+        base_url=cfg.base_url,
     )
 
 
-def ask_option(label: str, values: list[str], default: str) -> str:
-    print(f"{label} [{'/'.join(values)}] (default: {default})")
-    response = input("> ").strip().lower()
-    if not response:
+def _normalize_choice(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", value.lower())
+
+
+def _ask_choice(label: str, values: list[str], default: str) -> str:
+    print(f"  {label} (default: {default})")
+    for idx, item in enumerate(values, 1):
+        print(f"    {idx}) {item}")
+    raw = input("  > ").strip()
+    if not raw:
         return default
-    if response in values:
-        return response
-    print(f"Invalid option. Using default: {default}")
+
+    if raw.isdigit():
+        idx = int(raw) - 1
+        if 0 <= idx < len(values):
+            return values[idx]
+
+    normalized_map = {_normalize_choice(item): item for item in values}
+    key = _normalize_choice(raw)
+    if key in normalized_map:
+        return normalized_map[key]
+
+    for item in values:
+        item_key = _normalize_choice(item)
+        if key and (item_key.startswith(key) or key in item_key):
+            return item
     return default
+
+
+def ask_option(label: str, values: list[str], default: str) -> str:
+    return _ask_choice(label, values, default)
+
+
+def print_main_help() -> None:
+    print("DesysFlow CLI")
+    print("")
+    print("Usage:")
+    print("  desysflow design [options]")
+    print("  desysflow redesign [options]")
+    print("")
+    print("Commands:")
+    print("  design     Generate a new versioned design package")
+    print("  redesign   Refine from latest version (falls back to fresh when needed)")
+    print("  help       Show this help")
+    print("")
+    print("Run 'desysflow design --help' or 'desysflow <command> --help' for detailed options.")
+    print("")
+
+
+def parse_run_args(command: str, argv: list[str] | None = None) -> RunConfig:
+    parser = argparse.ArgumentParser(
+        prog=f"desysflow {command.lstrip('/')}",
+        description=(
+            "Generate a versioned system-design package from a source repository."
+            if command in {"/design", "design"}
+            else "Refine from the latest generated design package."
+        ),
+        add_help=False,
+        formatter_class=_SortedHelpFormatter,
+    )
+
+    provider_ids = [p["id"] for p in cfg_providers()]
+
+    g = parser.add_argument_group("model options").add_argument
+    g("--model-provider", metavar="PROVIDER",
+      choices=provider_ids,
+      help=f"LLM provider: {' | '.join(provider_ids)}  (default: prompted interactively)")
+    g("--model", metavar="NAME",
+      help="Model name, e.g. gpt-4o | claude-sonnet-4-20250514 | llama3  (default: prompted)")
+    g("--api-key", metavar="KEY",
+      help="API key for OpenAI or Anthropic  (prompted if not set)")
+    g = parser.add_argument_group("project options").add_argument
+    g("--source", default=".", metavar="PATH",
+      help="Source repository to analyze (default: .)")
+    g("--out", default="", metavar="PATH",
+      help="Output root directory (default: existing ./.desflow, else ./desysflow)")
+    g("--project", default="", metavar="NAME",
+      help="Project name (default: source directory name)")
+
+    g = parser.add_argument_group("design options").add_argument
+    g("--language", choices=cfg_list("languages", ["python", "typescript", "go", "java", "rust"]),
+      help="Preferred implementation language")
+    g("--style", choices=cfg_list("styles", ["minimal", "balanced", "detailed"]),
+      help="Report depth style")
+    g("--cloud", choices=cfg_list("clouds", ["local", "aws", "gcp", "azure", "hybrid"]),
+      help="Cloud deployment target")
+    g("--web-search", choices=cfg_list("search_modes", ["auto", "on", "off"]),
+      help="External web search mode")
+    g("--focus", default="", metavar="TEXT",
+      help="Refinement goal for refine runs")
+    g("--prompt", default="", metavar="TEXT",
+      help="Design prompt (optional). If omitted, CLI generates from current codebase context.")
+    g("--role", default="", metavar="NAME",
+      help="Design role/persona, e.g. DevOps, Principal Architect")
+    g("--mode", choices=cfg_list("design_modes", ["smart", "fresh", "refine"]),
+      help="Routing mode: smart picks fresh or refine automatically")
+
+    g = parser.add_argument_group("runtime options").add_argument
+    g("--no-interactive", action="store_true",
+      help="Skip all interactive prompts; use only CLI flags and env vars")
+
+    parser.add_argument("--help", action="help",
+      help="Show this help message and exit")
+
+    ns = parser.parse_args(argv)
+
+    source = Path(ns.source).expanduser().resolve()
+    project = ns.project.strip() or default_project_name(source)
+
+    cfg = RunConfig(
+        command=command,
+        source=source,
+        output_root=Path(ns.out).expanduser().resolve() if ns.out.strip() else default_output_root().resolve(),
+        project=project,
+        language=(ns.language or "").strip(),
+        style=(ns.style or "").strip(),
+        cloud=(ns.cloud or "").strip(),
+        web_search=(ns.web_search or "").strip(),
+        mode=(ns.mode or "").strip(),
+        effective_mode="",
+        focus=ns.focus.strip(),
+        role=(ns.role or "").strip(),
+        prompt=(ns.prompt or "").strip(),
+        non_interactive=bool(ns.no_interactive),
+    )
+    cfg.model_provider = (ns.model_provider or "").strip()
+    cfg.model_name     = (ns.model or "").strip()
+    cfg.api_key        = (ns.api_key or "").strip()
+    return finalize_options(cfg)
+
+
+def parse_chat_args(argv: list[str] | None = None) -> ChatConfig:
+    parser = argparse.ArgumentParser(
+        prog="desysflow chat",
+        description="Compatibility alias for one-shot DesysFlow design generation.",
+    )
+    parser.add_argument("--source", default=".", help="Source repository path to analyze.")
+    parser.add_argument("--out", default="", help="Storage root for local sessions and outputs.")
+    parser.add_argument("--project", default="", help="Project name override.")
+    parser.add_argument("--session", default="", help=argparse.SUPPRESS)
+    ns = parser.parse_args(argv)
+    source = Path(ns.source).expanduser().resolve()
+    output_root = Path(ns.out).expanduser().resolve() if ns.out.strip() else default_output_root().resolve()
+    project = ns.project.strip() or default_project_name(source)
+    return ChatConfig(source=source, output_root=output_root, project=project, session_id=ns.session.strip())
+
+
+def parse_history_args(argv: list[str] | None = None) -> HistoryConfig:
+    parser = argparse.ArgumentParser(
+        prog="desysflow history",
+        description="List local DesysFlow chat sessions.",
+    )
+    parser.add_argument("--out", default="", help="Storage root for local sessions and outputs.")
+    parser.add_argument("--limit", type=int, default=20, help="Maximum number of sessions to show.")
+    ns = parser.parse_args(argv)
+    output_root = Path(ns.out).expanduser().resolve() if ns.out.strip() else default_output_root().resolve()
+    return HistoryConfig(output_root=output_root, limit=max(1, ns.limit))
 
 
 def normalize_cloud(value: str) -> str:
     return "local" if value == "none" else value
+
+
+_REDACT_COUNTER = 0
+
+
+def _next_redact_id() -> str:
+    global _REDACT_COUNTER
+    _REDACT_COUNTER += 1
+    return f"REDACTED-{_REDACT_COUNTER}"
+
+
+def scrub_secrets(text: str) -> tuple[str, list[str]]:
+    """Replace secret-like values with [REDACTED-N] placeholders.
+
+    Returns (scrubbed_text, list_of_redacted_labels).
+    """
+    global _REDACT_COUNTER
+    redacted: list[str] = []
+    for pattern, _ in SECRET_PATTERNS:
+        for match in re.finditer(pattern, text):
+            label = _next_redact_id()
+            redacted.append(f"[{label}] {match.group().strip()}")
+            text = text[:match.start()] + f"[{label}]" + text[match.end():]
+    return text, redacted
+
+
+def check_source_for_secrets(source: Path) -> list[str]:
+    """Quick pre-scan of source files for high-confidence secret leaks.
+
+    Scans only the first 20 lines of each file to avoid heavy I/O.
+    Returns a list of warning messages for files that appear to contain secrets.
+    """
+    warnings: list[str] = []
+    scan_count = 0
+    for root, dirs, names in os.walk(source):
+        dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
+        for name in names:
+            if scan_count >= 500:
+                return warnings
+            path = Path(root) / name
+            if path.name.startswith("."):
+                continue
+            try:
+                lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()[:20]
+            except Exception:
+                continue
+            joined = "\n".join(lines)
+            for pattern, _ in SECRET_PATTERNS:
+                if re.search(pattern, joined):
+                    warnings.append(f"  {path}: possible secret pattern detected — review before sharing generated docs")
+                    break
+            scan_count += 1
+    return warnings
 
 
 def resolve_effective_mode(command: str, mode: str, has_existing_design: bool, focus: str) -> str:
@@ -358,6 +663,8 @@ def record_run(db_path: Path, cfg: RunConfig, output_path: Path) -> int:
             "mode": cfg.mode,
             "effective_mode": cfg.effective_mode,
             "focus": cfg.focus,
+            "role": cfg.role,
+            "prompt": cfg.prompt,
             "non_interactive": cfg.non_interactive,
         }
     )
@@ -668,8 +975,9 @@ def style_notes(style: str) -> dict[str, str]:
 
 
 def build_analysis_context(cfg: RunConfig) -> AnalysisContext:
-    web_enabled = should_enable_web_search(cfg.web_search, cfg.project, cfg.focus, cfg.cloud)
-    search_query = f"{cfg.project} {cfg.focus or 'system design'} {cfg.cloud}".strip()
+    intent_text = cfg.prompt.strip() or cfg.focus.strip() or cfg.project
+    web_enabled = should_enable_web_search(cfg.web_search, intent_text, cfg.focus, cfg.cloud)
+    search_query = f"{cfg.project} {intent_text} {cfg.cloud}".strip()
 
     with ThreadPoolExecutor(max_workers=5) as executor:
         inventory_future = executor.submit(source_inventory, cfg.source)
@@ -716,6 +1024,40 @@ def build_mermaid(ctx: AnalysisContext, cfg: RunConfig) -> str:
     return "\n".join(lines) + "\n"
 
 
+def build_user_request(cfg: RunConfig, ctx: AnalysisContext) -> str:
+    key_paths = ", ".join(ctx.key_paths[:8]) if ctx.key_paths else "repository root files"
+    base = [
+        f"Role: {cfg.role}",
+        f"Project: {cfg.project}",
+        f"Preferred implementation language: {cfg.language}",
+        f"Cloud target: {cfg.cloud}",
+        f"Design style: {cfg.style}",
+        f"Reference paths: {key_paths}",
+    ]
+    if cfg.prompt.strip():
+        base.append(f"Design request: {cfg.prompt.strip()}")
+    elif cfg.focus.strip():
+        base.append(f"Design request: {cfg.focus.strip()}")
+    else:
+        base.append(
+            "Design request: Create a production-grade architecture for the current codebase, "
+            "including API boundaries, data flow, scaling, availability, and security."
+        )
+    return "\n".join(base)
+
+
+def _pretty(value: Any) -> str:
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, indent=2)
+    return str(value)
+
+
+def _bullet_list(items: list[Any], fallback: str = "- Not specified.") -> str:
+    if not items:
+        return fallback
+    return "\n".join(f"- {_pretty(item)}" for item in items)
+
+
 def render_hld(cfg: RunConfig, version: str, ctx: AnalysisContext) -> str:
     style_hint = style_notes(cfg.style)
     module_lines = "\n".join(
@@ -759,6 +1101,11 @@ This high-level design is generated from the current source tree. {style_hint["d
 ## Trade-offs
 - Static repo inspection is reliable and reproducible, but it cannot infer every unstated business constraint.
 - Keeping the review loop lightweight improves output quality without turning the OSS workflow into a heavyweight gated review product.
+
+## Future Improvements
+- Add explicit capacity envelopes per critical service with SLO/SLA mappings.
+- Introduce clearer cost tiering guidance for local, cloud, and hybrid deployments.
+- Extend architecture variants with migration pathways for growth stages.
 """
 
 
@@ -774,7 +1121,6 @@ def render_lld(cfg: RunConfig, ctx: AnalysisContext) -> str:
 
 ## Schemas
 - `METADATA.json`: run metadata, hashes, and parent version references.
-- `SOURCE_INVENTORY.md`: repository inventory and module overview.
 - `TREE.md`: emitted folder tree for the current design version.
 
 ## Service Communication
@@ -806,6 +1152,11 @@ def render_lld(cfg: RunConfig, ctx: AnalysisContext) -> str:
 - {style_hint["test_depth"]}
 - Confirm `diagram.mmd` starts with `flowchart TD`.
 - Confirm required markdown sections are present after each run.
+
+## Future Improvements
+- Add API versioning and backward-compatibility checks into the refine workflow.
+- Add richer schema evolution guidance with migration and rollback notes.
+- Expand failure-mode playbooks with concrete SLO-linked remediation steps.
 """
 
 
@@ -854,7 +1205,7 @@ This versioned design package was generated from repository inspection using an 
 
 ## Session Management and Memory
 - Run history is stored in `desysflow/.desysflow_cli.db`.
-- No Mem0, Qdrant, Supabase, or heavyweight product-memory layer is required.
+- No external product-memory layer is required.
 
 ## Web Search Strategy
 - User mode: `{cfg.web_search}`
@@ -869,6 +1220,11 @@ This versioned design package was generated from repository inspection using an 
 - Top extensions:
 {extension_lines}
 - Current output version: `{version}`
+
+## Future Improvements
+- Add deeper dependency graphing to improve impact analysis during refine runs.
+- Add optional benchmark-backed sizing recommendations for common deployment profiles.
+- Add stricter doc quality gates for API consistency, resilience notes, and rollback readiness.
 """
 
 
@@ -942,9 +1298,7 @@ Generated files:
 - `LLD.md`
 - `TECHNICAL_REPORT.md`
 - `NON_TECHNICAL_DOC.md`
-- `PIPELINE.md`
 - `diagram.mmd`
-- `SOURCE_INVENTORY.md`
 - `TREE.md`
 - `METADATA.json`
 - `CHANGELOG.md`
@@ -1025,13 +1379,245 @@ This package is intended to help teams move from idea to implementation plan wit
 """
 
 
-def render_docs(cfg: RunConfig, version: str, ctx: AnalysisContext) -> dict[str, str]:
+def render_hld_from_workflow(cfg: RunConfig, version: str, result: dict[str, Any], user_request: str) -> str:
+    hld = result.get("hld_report", {}) or {}
+    components = hld.get("components", []) if isinstance(hld.get("components"), list) else []
+    data_flow = hld.get("data_flow", []) if isinstance(hld.get("data_flow"), list) else []
+    trade_offs = hld.get("trade_offs", []) if isinstance(hld.get("trade_offs"), list) else []
+    capacity = hld.get("estimated_capacity", {}) if isinstance(hld.get("estimated_capacity"), dict) else {}
+    assumptions = [
+        "Current prompt and repository context represent the primary product scope.",
+        "Non-functional targets are derived from extracted requirements when explicit values are missing.",
+        "Cloud and runtime choices can be evolved in follow-up design iterations.",
+    ]
+    return f"""# HLD
+
+## Overview
+- Project: `{cfg.project}`
+- Version: `{version}`
+- Role: `{cfg.role}`
+- Preferred language: `{cfg.language}`
+- Cloud target: `{cfg.cloud}`
+
+{hld.get("system_overview", "No overview generated.")}
+
+## Scope and Assumptions
+### Scope
+- Architecture-level design for service boundaries, data flow, scaling, and reliability.
+- Delivery-ready HLD that can be refined into implementation tasks.
+### Assumptions
+{_bullet_list(assumptions)}
+
+## Components
+{_bullet_list(components)}
+
+## Data Flow
+{_bullet_list(data_flow)}
+
+## Scaling and Availability
+- Scaling strategy: {hld.get("scaling_strategy", "Not specified.")}
+- Availability and DR: {hld.get("availability", "Not specified.")}
+
+## Non-Functional Requirements
+- Performance and latency: derived from extracted requirements and service topology.
+- Reliability objective: high availability with graceful degradation on downstream failures.
+- Security baseline: least privilege, encrypted transport, and auditable operational controls.
+
+## Trade-offs
+{_bullet_list(trade_offs)}
+
+## Capacity Estimates
+{_bullet_list([f"{k}: {v}" for k, v in capacity.items()], fallback="- Not specified.")}
+
+## Prompt Context
+- Input request:
+```text
+{user_request}
+```
+
+## Future Improvements
+- Add workload-specific sizing validation against expected growth intervals.
+- Add explicit cost/performance option sets per deployment model.
+- Add migration runbooks for major architecture transitions.
+"""
+
+
+def render_lld_from_workflow(cfg: RunConfig, result: dict[str, Any]) -> str:
+    lld = result.get("lld_report", {}) or {}
+    apis = lld.get("api_endpoints", []) if isinstance(lld.get("api_endpoints"), list) else []
+    dbs = lld.get("database_schemas", []) if isinstance(lld.get("database_schemas"), list) else []
+    comms = lld.get("service_communication", []) if isinstance(lld.get("service_communication"), list) else []
+    caching = lld.get("caching_strategy", []) if isinstance(lld.get("caching_strategy"), list) else []
+    errors = lld.get("error_handling", []) if isinstance(lld.get("error_handling"), list) else []
+    deployment = lld.get("deployment", {}) if isinstance(lld.get("deployment"), dict) else {}
+    security = lld.get("security", []) if isinstance(lld.get("security"), list) else []
+    return f"""# LLD
+
+## Implementation Scope
+- Translate architecture into APIs, schemas, communication contracts, and operations controls.
+- Provide implementation guidance while keeping interfaces and failure behavior explicit.
+
+## APIs
+{_bullet_list([f"{item.get('method', '')} {item.get('path', '')} :: {item.get('description', '')}" for item in apis])}
+
+## Schemas
+{_bullet_list([f"{item.get('name', 'schema')} ({item.get('type', 'unknown')})" for item in dbs])}
+
+## Service Communication
+{_bullet_list([f"{item.get('from', '')} -> {item.get('to', '')} via {item.get('protocol', '')}: {item.get('description', '')}" for item in comms])}
+
+## Caching
+{_bullet_list([f"{item.get('layer', '')} ({item.get('technology', '')}) ttl={item.get('ttl', '')}" for item in caching])}
+
+## Error Handling
+{_bullet_list([f"{item.get('scenario', '')}: {item.get('strategy', '')} | fallback={item.get('fallback', '')}" for item in errors])}
+
+## Deployment
+{_bullet_list([f"{k}: {v}" for k, v in deployment.items()], fallback="- Not specified.")}
+
+## Security
+{_bullet_list(security)}
+
+## Testing and Validation
+- Contract tests for request/response schemas and compatibility.
+- Integration tests for service communication and datastore boundaries.
+- Resilience tests for timeout, retry, and fallback behavior.
+
+## Future Improvements
+- Add endpoint-by-endpoint SLA and idempotency contracts.
+- Add schema migration/rollback playbooks for critical data models.
+- Add detailed degradation modes for downstream dependency failures.
+"""
+
+
+def render_technical_report_from_workflow(
+    cfg: RunConfig,
+    ctx: AnalysisContext,
+    version: str,
+    result: dict[str, Any],
+    user_request: str,
+) -> str:
+    refs_md = "\n".join(
+        f"- [{item['title'] or item['url']}]({item['url']}) - {item['snippet'][:160]}"
+        for item in ctx.references
+    ) or "- No external references used for this run."
+    components = result.get("hld_report", {}).get("components", [])
+    api_endpoints = result.get("lld_report", {}).get("api_endpoints", [])
+    requirements = result.get("requirements", {}) or {}
+    return f"""# TECHNICAL REPORT
+
+## Executive Summary
+Prompt-driven workflow executed for role `{cfg.role}` and produced architecture artifacts for version `{version}`.
+
+## Document Control
+- Project: `{cfg.project}`
+- Version: `{version}`
+- Role: `{cfg.role}`
+- Style: `{cfg.style}`
+- Cloud target: `{cfg.cloud}`
+
+## Sub-agent Topology
+- Extractor -> template selector -> architecture generator -> edge-case injector -> primary selector.
+- Diagram pipeline -> quality refinement.
+- Report generator -> cloud infrastructure mapping.
+
+## Parallel Execution Plan
+- Repository context build runs in parallel (inventory, stack, modules, references).
+- Document packaging runs in parallel where possible for markdown outputs.
+
+## Internal Reviewer Loop
+- Required-section validation and wording normalization pass.
+- Mermaid prefix/shape validation pass.
+
+## Context Bloat Fixes
+- Representative files capped to `TOP_FILE_LIMIT={TOP_FILE_LIMIT}`.
+- Outputs versioned per run to keep diffs small and traceable.
+
+## Session Management and Memory
+- Session and run metadata stored in local SQLite.
+- Generated docs stored in versioned filesystem folders.
+
+## Requirements Baseline
+{_bullet_list([f"{k}: {v}" for k, v in requirements.items()], fallback="- Not available.")}
+
+## Architecture Signals
+- HLD components generated: {len(components) if isinstance(components, list) else 0}
+- LLD API endpoints generated: {len(api_endpoints) if isinstance(api_endpoints, list) else 0}
+- Cloud target: `{cfg.cloud}`
+- Language target: `{cfg.language}`
+
+## Quality and Risks
+- Primary quality focus: maintainability, reliability, and observability.
+- Delivery risk: requirement ambiguity when prompt details are sparse.
+- Operational risk: dependency bottlenecks without capacity validation in runtime environment.
+
+## Prompt Context
+```text
+{user_request}
+```
+
+## External References
+{refs_md}
+
+## Future Improvements
+- Add automated architecture quality scoring across reliability, cost, and security dimensions.
+- Add benchmark-derived capacity guidance for common traffic tiers.
+- Add deeper refine-mode context stitching with prior version deltas.
+"""
+
+
+def render_non_technical_doc_from_workflow(result: dict[str, Any]) -> str:
+    doc = build_non_technical_doc(result)
+    return f"""# NON-TECHNICAL DOC
+
+## Product Summary
+- {doc.get("summary", "No summary generated.")}
+
+## Business Value
+{_bullet_list(doc.get("business_value", []) if isinstance(doc.get("business_value"), list) else [])}
+
+## Target Users
+{_bullet_list(doc.get("target_users", []) if isinstance(doc.get("target_users"), list) else [])}
+
+## Delivery Shape
+{_bullet_list([f"{k}: {v}" for k, v in (doc.get("delivery_shape", {}) or {}).items()], fallback="- Not specified.")}
+
+## Future Improvements
+{_bullet_list(doc.get("future_improvements", []) if isinstance(doc.get("future_improvements"), list) else [])}
+"""
+
+
+def render_docs(
+    cfg: RunConfig,
+    version: str,
+    ctx: AnalysisContext,
+    workflow_result: dict[str, Any] | None = None,
+    user_request: str = "",
+) -> dict[str, str]:
+    if workflow_result:
+        docs = {
+            "HLD.md": render_hld_from_workflow(cfg, version, workflow_result, user_request),
+            "LLD.md": render_lld_from_workflow(cfg, workflow_result),
+            "TECHNICAL_REPORT.md": render_technical_report_from_workflow(cfg, ctx, version, workflow_result, user_request),
+            "NON_TECHNICAL_DOC.md": render_non_technical_doc_from_workflow(workflow_result),
+            "SUMMARY.md": render_summary(cfg, version, ctx),
+            "CHANGELOG.md": render_changelog(cfg, version, ctx),
+            "diagram.mmd": str(workflow_result.get("mermaid_code", "") or build_mermaid(ctx, cfg)),
+        }
+        docs, all_redacted = scrub_secrets_from_docs(docs)
+        if all_redacted:
+            print(f"[SECURITY] Scrubbed {len(all_redacted)} secret(s) from generated docs:")
+            for r in all_redacted[:10]:
+                print(f"  - {r}")
+            if len(all_redacted) > 10:
+                print(f"  ... and {len(all_redacted) - 10} more")
+        return run_reviewer_loop(docs)
+
     with ThreadPoolExecutor(max_workers=6) as executor:
         hld_future = executor.submit(render_hld, cfg, version, ctx)
         lld_future = executor.submit(render_lld, cfg, ctx)
         report_future = executor.submit(render_technical_report, cfg, ctx, version)
         non_tech_future = executor.submit(render_non_technical_doc, cfg, ctx, version)
-        pipeline_future = executor.submit(render_pipeline, cfg, ctx)
         diagram_future = executor.submit(build_mermaid, ctx, cfg)
 
     docs = {
@@ -1039,13 +1625,29 @@ def render_docs(cfg: RunConfig, version: str, ctx: AnalysisContext) -> dict[str,
         "LLD.md": lld_future.result(),
         "TECHNICAL_REPORT.md": report_future.result(),
         "NON_TECHNICAL_DOC.md": non_tech_future.result(),
-        "PIPELINE.md": pipeline_future.result(),
         "SUMMARY.md": render_summary(cfg, version, ctx),
-        "SOURCE_INVENTORY.md": render_inventory(ctx),
         "CHANGELOG.md": render_changelog(cfg, version, ctx),
         "diagram.mmd": diagram_future.result(),
     }
+    docs, all_redacted = scrub_secrets_from_docs(docs)
+    if all_redacted:
+        print(f"[SECURITY] Scrubbed {len(all_redacted)} secret(s) from generated docs:")
+        for r in all_redacted[:10]:
+            print(f"  - {r}")
+        if len(all_redacted) > 10:
+            print(f"  ... and {len(all_redacted) - 10} more")
     return run_reviewer_loop(docs)
+
+
+def scrub_secrets_from_docs(docs: dict[str, str]) -> tuple[dict[str, str], list[str]]:
+    """Scrub secret patterns from all doc contents. Returns (scrubbed_docs, all_redacted)."""
+    all_redacted: list[str] = []
+    cleaned: dict[str, str] = {}
+    for name, content in docs.items():
+        scrubbed, redacted = scrub_secrets(content)
+        cleaned[name] = scrubbed
+        all_redacted.extend(redacted)
+    return cleaned, all_redacted
 
 
 def ensure_sections(content: str, sections: list[str], fallback_line: str) -> str:
@@ -1112,9 +1714,12 @@ def apply_review_fixes(docs: dict[str, str], findings: list[str]) -> dict[str, s
         NON_TECH_REQUIRED_SECTIONS,
         "- Added by the internal reviewer loop to preserve required OSS structure.",
     )
-    updated["PIPELINE.md"] = normalize_oss_wording(updated["PIPELINE.md"])
-    updated["SUMMARY.md"] = normalize_oss_wording(updated["SUMMARY.md"])
-    updated["CHANGELOG.md"] = normalize_oss_wording(updated["CHANGELOG.md"])
+    if "PIPELINE.md" in updated:
+        updated["PIPELINE.md"] = normalize_oss_wording(updated["PIPELINE.md"])
+    if "SUMMARY.md" in updated:
+        updated["SUMMARY.md"] = normalize_oss_wording(updated["SUMMARY.md"])
+    if "CHANGELOG.md" in updated:
+        updated["CHANGELOG.md"] = normalize_oss_wording(updated["CHANGELOG.md"])
 
     if not updated["diagram.mmd"].lstrip().startswith("flowchart TD"):
         updated["diagram.mmd"] = "flowchart TD\n    A[Reviewer Loop] --> B[Fixed Mermaid header]\n"
@@ -1153,10 +1758,53 @@ def folder_tree(root: Path) -> str:
 
 
 def write_artifacts(target: Path, docs: dict[str, str], metadata: dict[str, Any]) -> None:
+    # Scrub api_key fields from metadata before writing
+    safe_meta = {k: ("[REDACTED]" if "api_key" in k.lower() and v else v) for k, v in metadata.items()}
     target.mkdir(parents=True, exist_ok=True)
     for name, content in docs.items():
         (target / name).write_text(content.strip() + "\n", encoding="utf-8")
-    (target / "METADATA.json").write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
+    (target / "METADATA.json").write_text(json.dumps(safe_meta, indent=2) + "\n", encoding="utf-8")
+
+
+def _short_hash(text: str) -> str:
+    return sha256(text.encode("utf-8")).hexdigest()[:12]
+
+
+def _fmt_size_bytes(size: int) -> str:
+    if size < 1024:
+        return f"{size} B"
+    if size < 1024 * 1024:
+        return f"{size / 1024:.1f} KB"
+    return f"{size / (1024 * 1024):.2f} MB"
+
+
+def _print_run_header(cfg: RunConfig, target: Path, version: str, previous: Path | None) -> None:
+    print("")
+    print("[run] desysflow generation started")
+    print(f"[cmd] requested={cfg.command} effective={cfg.effective_mode}")
+    print(f"[params] project={cfg.project} version={version}")
+    print(f"[params] source={cfg.source}")
+    print(f"[params] output={target}")
+    print(f"[params] language={cfg.language} style={cfg.style} cloud={cfg.cloud} web_search={cfg.web_search}")
+    print(f"[params] role={cfg.role}")
+    print(f"[params] provider={cfg.model_provider or 'n/a'} model={cfg.model_name or 'n/a'}")
+    print(f"[params] prompt={cfg.prompt or cfg.focus or 'auto-from-codebase'}")
+    print(f"[params] parent_version={previous.name if previous else 'none'}")
+
+
+def _print_doc_status(docs: dict[str, str]) -> None:
+    print("[status] generated artifact bodies")
+    for name, content in docs.items():
+        size = len(content.encode("utf-8"))
+        print(f"  - {name:<20} {_fmt_size_bytes(size):>8}  sha={_short_hash(content)}")
+
+
+def _print_written_status(path: Path) -> None:
+    print("[status] wrote files")
+    file_names = sorted(item.name for item in path.iterdir() if item.is_file())
+    for name in file_names:
+        file_path = path / name
+        print(f"  - {name:<20} {_fmt_size_bytes(file_path.stat().st_size):>8}")
 
 
 def build_diff(previous: Path | None, current_docs: dict[str, str]) -> str:
@@ -1175,9 +1823,10 @@ def build_diff(previous: Path | None, current_docs: dict[str, str]) -> str:
             tofile=f"current/{name}",
             lineterm="",
         )
+        diff_text, _ = scrub_secrets("\n".join(diff))
         lines.append(f"## {name}")
         lines.append("```diff")
-        lines.extend(list(diff)[:250])
+        lines.extend(diff_text.splitlines()[:250])
         lines.append("```")
         lines.append("")
 
@@ -1192,8 +1841,23 @@ def run(cfg: RunConfig) -> int:
     if not cfg.source.exists() or not cfg.source.is_dir():
         raise SystemExit(f"Source path is invalid: {cfg.source}")
 
+    # Pre-scan source for potential secret leaks and warn the user
+    secret_warnings = check_source_for_secrets(cfg.source)
+    if secret_warnings:
+        print("[SECURITY WARNING] Possible secrets detected in source:")
+        for w in secret_warnings[:5]:
+            print(w)
+        if len(secret_warnings) > 5:
+            print(f"  ... and {len(secret_warnings) - 5} more files")
+        print("Review generated docs before sharing.")
+        if os.isatty(0):
+            confirm = input("Continue? [y/N]: ").strip().lower()
+            if confirm not in ("y", "yes"):
+                raise SystemExit("Aborted.")
+
     project_root = cfg.output_root / cfg.project
     version, target, previous = choose_version(project_root)
+    _print_run_header(cfg, target, version, previous)
     if cfg.effective_mode == "refine" and previous is None:
         print("No baseline found for refine mode; running as fresh /design generation.")
         cfg = RunConfig(
@@ -1208,11 +1872,45 @@ def run(cfg: RunConfig) -> int:
             mode=cfg.mode,
             effective_mode="fresh",
             focus=cfg.focus,
+            role=cfg.role,
+            prompt=cfg.prompt,
             non_interactive=cfg.non_interactive,
+            model_provider=cfg.model_provider,
+            model_name=cfg.model_name,
+            api_key=cfg.api_key,
+            base_url=cfg.base_url,
         )
 
+    print("[stage] analysis context")
     ctx = build_analysis_context(cfg)
-    docs = render_docs(cfg, version, ctx)
+    print(
+        f"[status] modules={len(ctx.module_map)} key_paths={len(ctx.key_paths)} "
+        f"references={len(ctx.references)} web_search_effective={'on' if ctx.web_enabled else 'off'}"
+    )
+    if ctx.web_enabled and not ctx.references:
+        print("[warn] Web search was enabled but returned 0 references (check network access or DDGS setup).")
+    print("[stage] run architecture workflow")
+    print("[status] waiting for LLM response; local Ollama models can take a few minutes on large prompts")
+    user_request = build_user_request(cfg, ctx)
+    workflow_result: dict[str, Any] | None = None
+    try:
+        workflow_result = run_workflow(
+            user_request,
+            diagram_style=cfg.style,
+            preferred_language=cfg.language,
+        )
+        hld_components = workflow_result.get("hld_report", {}).get("components", [])
+        lld_apis = workflow_result.get("lld_report", {}).get("api_endpoints", [])
+        print(
+            f"[status] workflow generated components={len(hld_components) if isinstance(hld_components, list) else 0} "
+            f"api_endpoints={len(lld_apis) if isinstance(lld_apis, list) else 0}"
+        )
+    except Exception as exc:
+        print(f"[warn] prompt-driven workflow failed, using template fallback: {exc}")
+
+    print("[stage] render docs")
+    docs = render_docs(cfg, version, ctx, workflow_result=workflow_result, user_request=user_request)
+    _print_doc_status(docs)
     metadata = {
         "project": cfg.project,
         "version": version,
@@ -1222,6 +1920,8 @@ def run(cfg: RunConfig) -> int:
         "language": cfg.language,
         "style": cfg.style,
         "cloud": cfg.cloud,
+        "role": cfg.role,
+        "prompt": cfg.prompt,
         "web_search_mode": cfg.web_search,
         "web_search_effective": ctx.web_enabled,
         "source_path": str(cfg.source),
@@ -1232,43 +1932,31 @@ def run(cfg: RunConfig) -> int:
         "review_loop_limit": REVIEW_LOOP_LIMIT,
     }
 
+    print("[stage] write artifacts")
     write_artifacts(target, docs, metadata)
     (target / "TREE.md").write_text(folder_tree(target), encoding="utf-8")
     (target / "DIFF.md").write_text(build_diff(previous, docs), encoding="utf-8")
     (project_root / "latest").write_text(version + "\n", encoding="utf-8")
+    _print_written_status(target)
 
+    print("[stage] update local session db")
     db_path = cli_db_path(cfg.output_root)
     init_session_db(db_path)
     run_id = record_run(db_path, cfg, target)
     record_event(db_path, run_id, "summary", f"Generated {version} for {cfg.project} in {cfg.effective_mode} mode")
     record_event(db_path, run_id, "subagents", "parallel extractor|stack-profiler|architect|diagrammer|reporter")
     record_event(db_path, run_id, "reviewer_loop", f"limit={REVIEW_LOOP_LIMIT}")
+    record_event(db_path, run_id, "role", cfg.role)
     record_event(db_path, run_id, "language", cfg.language)
     record_event(db_path, run_id, "mode", f"requested={cfg.command}, effective={cfg.effective_mode}")
     if cfg.focus:
         record_event(db_path, run_id, "focus", cfg.focus)
     record_event(db_path, run_id, "web_search", f"enabled={ctx.web_enabled}, refs={len(ctx.references)}")
 
-    print(f"Generated design artifacts at: {target}")
-    print(f"Session DB: {db_path}")
-    print("Key files: HLD.md, LLD.md, TECHNICAL_REPORT.md, NON_TECHNICAL_DOC.md, PIPELINE.md, diagram.mmd, DIFF.md")
+    print(f"[done] generated design artifacts at: {target}")
+    print(f"[done] session db: {db_path}")
+    print("[hint] key files: HLD.md, LLD.md, TECHNICAL_REPORT.md, NON_TECHNICAL_DOC.md, diagram.mmd, DIFF.md")
     return 0
-
-
-def print_chat_help() -> None:
-    print("Chat Commands:")
-    print("  /help                 Show chat command help")
-    print("  /history              Show recent messages in this session")
-    print("  /design [focus]       Generate or refine design artifacts")
-    print("  /exit                 Exit chat mode")
-    print("")
-    print("Examples:")
-    print("  /design")
-    print("  /design improve caching and reliability")
-    print("")
-    print("Outside chat, use:")
-    print("  desysflow help")
-    print("  desysflow design --help")
 
 
 def require_llm_for_terminal() -> None:
@@ -1288,13 +1976,19 @@ def require_llm_for_terminal() -> None:
 
 
 def print_chat_session(session: dict[str, Any]) -> None:
+    def _preview(value: str, limit: int = 160) -> str:
+        one_line = " ".join(str(value).split())
+        if len(one_line) <= limit:
+            return one_line
+        return one_line[: limit - 1] + "…"
+
     print(f"Session: {session['session_id']} | {session['title']}")
     if not session.get("messages"):
         print("No messages yet.")
         return
     for item in session["messages"][-12:]:
         role = str(item.get("role", "assistant")).upper()
-        print(f"{role}: {item.get('content', '')}")
+        print(f"{role}: {_preview(item.get('content', ''))}")
 
 
 def run_history(cfg: HistoryConfig) -> int:
@@ -1309,7 +2003,7 @@ def run_history(cfg: HistoryConfig) -> int:
     return 0
 
 
-def make_run_config_from_chat(chat_cfg: ChatConfig, focus: str) -> RunConfig:
+def make_run_config_from_chat(chat_cfg: ChatConfig, focus: str, role: str) -> RunConfig:
     return finalize_options(
         RunConfig(
             command="/design",
@@ -1323,92 +2017,225 @@ def make_run_config_from_chat(chat_cfg: ChatConfig, focus: str) -> RunConfig:
             mode="smart",
             effective_mode="",
             focus=focus,
+            role=role,
+            prompt=focus,
             non_interactive=True,
         )
     )
 
 
 def run_chat(chat_cfg: ChatConfig) -> int:
-    require_llm_for_terminal()
-    db_path = cli_db_path(chat_cfg.output_root)
-    init_session_db(db_path)
+    """Compatibility path for the old chat command.
 
-    session: dict[str, Any] | None = None
-    if chat_cfg.session_id:
-        session = get_chat_session(db_path, chat_cfg.session_id)
-        if not session:
-            raise SystemExit(f"Session not found: {chat_cfg.session_id}")
-        print_chat_session(session)
-    else:
-        title = f"{chat_cfg.project} workspace"
-        session_id = create_chat_session(db_path, chat_cfg.project, chat_cfg.source, title)
-        session = get_chat_session(db_path, session_id)
-        print(f"Started session {session_id} for {chat_cfg.project}")
-
-    print_chat_help()
-    assert session is not None
-
-    while True:
-        try:
-            user_input = input("desysflow> ").strip()
-        except EOFError:
-            print("")
-            return 0
-        except KeyboardInterrupt:
-            print("\nExiting chat.")
-            return 0
-
-        if not user_input:
-            continue
-        if user_input in {"/exit", "/quit"}:
-            return 0
-        if user_input == "/help":
-            print_chat_help()
-            continue
-        if user_input == "/history":
-            print_chat_session(get_chat_session(db_path, session["session_id"]) or session)
-            continue
-
-        add_chat_message(db_path, session["session_id"], "user", user_input)
-
-        if user_input.startswith("/design"):
-            focus = user_input[len("/design"):].strip()
-            run_cfg = make_run_config_from_chat(chat_cfg, focus)
-            exit_code = run(run_cfg)
-            project_root = run_cfg.output_root / run_cfg.project
-            latest = read_text_or_empty(project_root / "latest").strip()
-            latest_path = project_root / latest if latest else project_root
-            assistant = f"Generated design package at {latest_path}"
-            add_chat_message(db_path, session["session_id"], "assistant", assistant)
-            print(assistant)
-            if exit_code != 0:
-                return exit_code
-            continue
-
-        assistant = (
-            "This terminal-first mode tracks local chat history and can drive generation. "
-            "Use /design <goal> to produce or refine artifacts, or keep notes in this session."
+    Keep the command as a one-shot design run so
+    existing scripts do not drop users into an interactive loop.
+    """
+    print("The chat command is now a compatibility alias. Running one design generation.")
+    return run(
+        collect_run_args(
+            "design",
+            [
+                "--source",
+                str(chat_cfg.source),
+                "--out",
+                str(chat_cfg.output_root),
+                "--project",
+                chat_cfg.project,
+            ],
         )
-        add_chat_message(db_path, session["session_id"], "assistant", assistant)
-        print(assistant)
+    )
+
+
+def run_wizard() -> int:
+    """Full interactive wizard — no arguments needed."""
+    print("DesysFlow CLI")
+    print("Basic setup.\n")
+
+    # ── Model provider ─────────────────────────────────────────────
+    providers = cfg_providers()
+    print_sep("Model")
+    provider_labels = [f"{p['label']} ({p.get('desc', p['id'])})" for p in providers]
+    selected_provider_label = _ask_choice("Provider", provider_labels, provider_labels[0])
+    provider_lookup = {provider_labels[idx]: providers[idx]["id"] for idx in range(len(providers))}
+    provider = provider_lookup[selected_provider_label]
+
+    # ── API key (GPT / Claude) ───────────────────────────────────
+    api_key = ""
+    if provider != "ollama":
+        env_key = "OPENAI_API_KEY" if provider == "openai" else "ANTHROPIC_API_KEY"
+        api_key = os.getenv(env_key, "").strip()
+        if not api_key:
+            print(f"\n  {provider.title()} selected — paste your API key below.")
+            print("  (key is stored in env and not written to disk)\n")
+            api_key = input(f"  API key: ").strip()
+            if api_key:
+                os.environ[env_key] = api_key
+
+    # ── Base URL ─────────────────────────────────────────────────
+    base_url_env_key = "OPENAI_BASE_URL" if provider == "openai" else ("ANTHROPIC_BASE_URL" if provider == "anthropic" else "OLLAMA_BASE_URL")
+    base_url_default = (
+        "https://api.openai.com/v1" if provider == "openai"
+        else "https://api.anthropic.com" if provider == "anthropic"
+        else "http://localhost:11434"
+    )
+    base_url = os.getenv(base_url_env_key, "").strip() or base_url_default
+    os.environ[base_url_env_key] = base_url
+
+    # ── Model name ───────────────────────────────────────────────
+    prov_defaults = _provider_defaults()
+    installed: list[str] = []
+    if provider == "ollama":
+        installed = list_ollama_models(base_url)
+        if installed:
+            print(f"\n  Local models: {', '.join(installed)}")
+        else:
+            print("\n  No Ollama models found.")
+            print("  Install one:  ollama pull <model>")
+
+    default = prov_defaults.get(provider, {}).get("model", "") or (installed[0] if installed else "")
+    print("")
+    model = input(f"  Model name" + (f" [{default}]" if default else "") + ": ").strip() or default
+
+    if provider == "ollama" and model and model not in installed:
+        print(f"\n  WARNING: '{model}' not in installed list.")
+        confirm = input("  Continue anyway? [y/N]: ").strip().lower()
+        if confirm not in ("y", "yes"):
+            raise SystemExit("Aborted — run again when your model is installed.")
+
+    os.environ["MODEL_PROVIDER"] = provider
+    if provider == "openai":
+        os.environ["OPENAI_MODEL"] = model
+    elif provider == "anthropic":
+        os.environ["ANTHROPIC_MODEL"] = model
+    else:
+        os.environ["OLLAMA_MODEL"] = model
+
+    # ── Language ─────────────────────────────────────────────────
+    languages = cfg_list("languages", ["python", "typescript", "go", "java", "rust"])
+    print_sep("Design preferences")
+    language = _ask_choice("Language", [item.title() for item in languages], languages[0].title()).lower()
+
+    # ── Style ────────────────────────────────────────────────────
+    styles = cfg_list("styles", ["minimal", "balanced", "detailed"])
+    style_default = "balanced" if "balanced" in styles else styles[0]
+    style = _ask_choice("Report style", [item.title() for item in styles], style_default.title()).lower()
+
+    # ── Role ─────────────────────────────────────────────────────
+    roles = cfg_list("roles", ["DevOps", "Principal Architect", "MLOps / AIOps"])
+    role = _ask_choice("Role", roles, roles[0])
+
+    # ── Mode ─────────────────────────────────────────────────────
+    modes = cfg_list("design_modes", ["smart", "fresh", "refine"])
+    mode = _ask_choice("Design mode", [item.title() for item in modes], modes[0].title()).lower()
+
+    # ── Prompt / focus ───────────────────────────────────────────
+    print_sep("Your design request")
+    prompt_mode = _ask_choice("Input mode", ["vibe-now", "ask"], "vibe-now")
+    prompt_text = ""
+    if prompt_mode == "ask":
+        print("  Describe product constraints/users/scale (optional).")
+        print("  Leave blank to generate architecture from current codebase context.")
+        print("")
+        prompt_text = input("  > ").strip()
+
+    # ── Summary ───────────────────────────────────────────────────
+    print_sep("Ready")
+    print(f"  Provider   :  {provider.title()}")
+    print(f"  Model      :  {model}")
+    print(f"  Language   :  {language.title()}")
+    print(f"  Style      :  {style.title()}")
+    print(f"  Role       :  {role}")
+    print(f"  Mode       :  {mode.title()}")
+    print(f"  API key    :  {'[set]' if api_key else '[none / Ollama]'}")
+    print(f"  Prompt     :  {prompt_text or '[auto-from-codebase]'}")
+    print("")
+    confirm = input("  Generate now? [Y/n]: ").strip().lower()
+    if confirm in ("n", "no"):
+        raise SystemExit("Cancelled.")
+
+    # ── Build RunConfig & run ────────────────────────────────────
+    defaults = cfg_defaults()
+    project = default_project_name(Path.cwd())
+    output_root = default_output_root()
+    project_root = output_root / project
+    has_existing_design = any(
+        child.is_dir() and child.name.startswith("v")
+        for child in project_root.iterdir()
+    ) if project_root.exists() else False
+    effective_mode = resolve_effective_mode("/design", mode, has_existing_design, prompt_text)
+    cfg = RunConfig(
+        command="/design",
+        source=Path.cwd(),
+        output_root=output_root,
+        project=project,
+        language=language,
+        style=style,
+        cloud=defaults.get("cloud", "local"),
+        web_search=defaults.get("search_mode", "auto"),
+        mode=mode,
+        effective_mode=effective_mode,
+        focus=prompt_text,
+        role=role,
+        prompt=prompt_text,
+        non_interactive=False,
+        model_provider=provider,
+        model_name=model,
+        api_key=api_key,
+        base_url=base_url,
+    )
+    cfg.non_interactive = True   # we already collected everything
+    return run(cfg)
+
+
+def collect_run_args(command: str, argv: list[str]) -> RunConfig:
+    """Parse CLI flags; fall back to interactive prompt for anything missing."""
+    cfg = parse_run_args(command, argv)
+
+    # If provider / model are not set, collect them interactively
+    interactive = not cfg.non_interactive and os.isatty(0)
+    if interactive and not cfg.model_provider:
+        cfg = resolve_model(cfg)
+
+    return cfg
+
+
+def clear() -> None:
+    return None
+
+
+def banner() -> str:
+    return "DesysFlow CLI"
+
+
+def print_sep(title: str) -> None:
+    print("")
+    print(f"  == {title} ==")
+    print("")
 
 
 def main(argv: list[str] | None = None) -> int:
     raw_args = list(argv) if argv is not None else list(os.sys.argv[1:])
-    if not raw_args:
-        default_root = get_storage_root()
-        return run_chat(ChatConfig(source=Path.cwd(), output_root=default_root, project=Path.cwd().name, session_id=""))
 
-    first = raw_args[0]
-    if first in {"help", "-h", "--help", "/help"}:
+    if not raw_args:
+        if os.isatty(0):
+            return run_wizard()
         print_main_help()
         return 0
-    if first in {"/design", "/redesign"}:
-        return run(parse_run_args(first, raw_args[1:]))
-    if first == "design":
-        return run(parse_run_args("/design", raw_args[1:]))
-    if first == "redesign":
-        return run(parse_run_args("/redesign", raw_args[1:]))
+
+    if raw_args[0] in {"help", "-h", "--help", "/help"}:
+        print_main_help()
+        return 0
+
+    first = raw_args[0]
+
+    # /letsvibedesign → interactive wizard (no args = wizard too)
+    if first in {"/letsvibedesign", "wizard", "interactive"}:
+        return run_wizard()
+
+    # design / redesign → collect args (CLI flags → wizard if needed)
+    if first in {"/design", "/redesign", "design", "redesign"}:
+        return run(collect_run_args(first, raw_args[1:]))
+
     if first == "chat":
         return run_chat(parse_chat_args(raw_args[1:]))
     if first == "history":
@@ -1416,6 +2243,7 @@ def main(argv: list[str] | None = None) -> int:
     if first == "resume":
         chat_cfg = parse_chat_args(["--session", raw_args[1], *raw_args[2:]]) if len(raw_args) > 1 else parse_chat_args(["--session", ""])
         return run_chat(chat_cfg)
+
     raise SystemExit(f"Unknown command: {first}\nRun `desysflow help` to see available commands.")
 
 

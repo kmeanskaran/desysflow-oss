@@ -20,6 +20,7 @@ export default function TechDocument({ data }) {
   const architecture = data.architecture || {}
   const implementation = data.implementation || {}
   const platform = data.platform || {}
+  const futureImprovements = data.future_improvements || []
 
   return (
     <div className="doc-view fade-in">
@@ -105,6 +106,11 @@ export default function TechDocument({ data }) {
             </dl>
           )}
         </article>
+      </section>
+
+      <section className="doc-section">
+        <h4>Future Improvements</h4>
+        {renderList(futureImprovements)}
       </section>
     </div>
   )

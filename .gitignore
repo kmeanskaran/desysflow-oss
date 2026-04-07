@@ -28,9 +28,13 @@ ui/dist/
 
 # Local storage and generated runtime outputs
 desysflow/
+.desflow/
 *.db
 
 # OS/editor
 .DS_Store
 .vscode/
 .idea/
+
+# Claude 
+.claude/

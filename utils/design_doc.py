@@ -31,6 +31,12 @@ def build_system_design_doc(result: Dict[str, Any]) -> Dict[str, Any]:
     security = _as_list(lld.get("security"))
     tech_languages = _as_list(tech_stack.get("languages"))
     preferred_language = requirements.get("preferred_language", "") or (tech_languages[0] if tech_languages else "Python")
+    future_improvements = [
+        "Add SLO-driven autoscaling and capacity guardrails for burst traffic.",
+        "Introduce contract testing and schema governance for service-to-service APIs.",
+        "Add progressive delivery controls (canary/rollback) with tighter release observability.",
+        "Expand threat modeling and runtime security checks for critical data paths.",
+    ]
 
     return {
         "title": "System Design Document",
@@ -70,4 +76,5 @@ def build_system_design_doc(result: Dict[str, Any]) -> Dict[str, Any]:
             "tech_stack": tech_stack,
             "cloud_infrastructure": cloud_infra,
         },
+        "future_improvements": future_improvements,
     }

@@ -8,61 +8,81 @@ cd "$ROOT_DIR"
 usage() {
   cat <<'EOF'
 Usage:
-  ./letsvibedesign
-  ./letsvibedesign setup
-  ./letsvibedesign cli
-  ./letsvibedesign dev
-  ./letsvibedesign api
-  ./letsvibedesign ui
-  ./letsvibedesign check
-
-Modes:
-  setup   First-run installation and model setup
-  cli     Launch terminal-first DesysFlow CLI
-  dev     Launch backend + UI
-  api     Launch backend only
-  ui      Launch UI only
-  check   Check selected model availability
+  ./letsvibedesign              Interactive wizard - pick a run mode
+  ./letsvibedesign cli          Run basic CLI design flow
+  ./letsvibedesign dev          Start API + UI together (http://localhost:5173)
+  ./letsvibedesign api          Start API only (http://localhost:8000/docs)
+  ./letsvibedesign ui           Start UI only (http://localhost:5173)
+  ./letsvibedesign check        Check model/provider availability
+  ./letsvibedesign help         Show this message
 EOF
 }
 
 ensure_bootstrap() {
   if [ ! -f ".env" ] || [ ! -d ".venv" ] || [ ! -d "ui/node_modules" ]; then
-    echo "First-time setup required."
+    echo "First-time setup required..."
     ./scripts/bootstrap.sh
   fi
 }
 
 pick_mode() {
-  printf "Start mode [cli/dev/api/ui/check] (default: cli): "
-  read -r mode
-  echo "${mode:-cli}"
+  cat >&2 <<'EOF'
+Select start mode:
+  1) cli   - basic design flow
+  2) dev   - API + UI together
+  3) api   - backend API only
+  4) ui    - frontend UI only
+  5) check - model health check
+EOF
+  printf "Choice [1-5] (default: 1): " >&2
+  read -r raw
+  case "${raw:-1}" in
+    1|cli) echo "cli" ;;
+    2|dev) echo "dev" ;;
+    3|api) echo "api" ;;
+    4|ui) echo "ui" ;;
+    5|check) echo "check" ;;
+    *)
+      echo "Invalid choice: ${raw}" >&2
+      echo "cli"
+      ;;
+  esac
+}
+
+source_env() {
+  if [ -f ".env" ]; then
+    set -a
+    . ./.env
+    set +a
+  fi
 }
 
 run_mode() {
   local mode="$1"
   case "$mode" in
-    setup)
-      ./scripts/bootstrap.sh
-      ;;
     cli)
       ensure_bootstrap
-      exec uv run desysflow
+      source_env
+      exec uv run desysflow design
       ;;
     dev)
       ensure_bootstrap
+      source_env
       exec ./scripts/dev.sh
       ;;
     api)
       ensure_bootstrap
+      source_env
       exec ./scripts/api.sh
       ;;
     ui)
       ensure_bootstrap
+      source_env
       exec ./scripts/ui.sh
       ;;
     check)
       ensure_bootstrap
+      source_env
       exec uv run python scripts/check_model.py
       ;;
     help|-h|--help)

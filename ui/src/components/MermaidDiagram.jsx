@@ -5,7 +5,7 @@ import mermaid from 'mermaid'
 mermaid.initialize({
     startOnLoad: false,
     theme: 'base',
-    securityLevel: 'loose',
+    securityLevel: 'strict',
     themeVariables: {
         background: '#f7f7f2',
         primaryColor: '#f1efe6',
@@ -24,7 +24,7 @@ mermaid.initialize({
         noteBorderColor: '#9ba6af',
     },
     flowchart: {
-        htmlLabels: true,
+        htmlLabels: false,
         curve: 'basis',
         padding: 20,
         nodeSpacing: 50,
@@ -33,6 +33,20 @@ mermaid.initialize({
 })
 
 let renderCounter = 0
+let latestRenderToken = 0
+
+function normalizeMermaidInput(rawCode = '') {
+    const cleaned = String(rawCode || '')
+        .replace(/```mermaid/gi, '```')
+        .replace(/```/g, '')
+        .trim()
+
+    const flowchartIndex = cleaned.toLowerCase().indexOf('flowchart ')
+    if (flowchartIndex >= 0) {
+        return cleaned.slice(flowchartIndex).trim()
+    }
+    return cleaned
+}
 
 export default function MermaidDiagram({ code }) {
     const containerRef = useRef(null)
@@ -51,11 +65,14 @@ export default function MermaidDiagram({ code }) {
         if (!code || !containerRef.current) return
 
         const render = async () => {
+            const token = ++latestRenderToken
             try {
                 setError(null)
                 const id = `mermaid-${++renderCounter}`
+                const normalizedCode = normalizeMermaidInput(code)
                 containerRef.current.innerHTML = ''
-                const { svg } = await mermaid.render(id, code)
+                const { svg } = await mermaid.render(id, normalizedCode)
+                if (token !== latestRenderToken) return
                 if (containerRef.current) {
                     containerRef.current.innerHTML = svg
                     const svgNode = containerRef.current.querySelector('svg')

@@ -3,6 +3,12 @@
 ## Basic Local Design Generation
 
 ```bash
+./letsvibedesign cli
+```
+
+Or run the command directly:
+
+```bash
 desysflow design --source . --out ./desysflow --project ecommerce-system
 ```
 
@@ -16,22 +22,30 @@ desysflow redesign \
   --focus "optimize checkout scalability and caching"
 ```
 
-## Resume a Previous Session
-
-```bash
-desysflow resume <session_id> --source . --out ./desysflow --project ecommerce-system
-```
-
-## Show Local History
-
-```bash
-desysflow history --out ./desysflow
-```
-
 ## Run API + UI Together
 
 ```bash
 ./letsvibedesign dev
+```
+
+## Run API Only
+
+```bash
+./letsvibedesign api
+```
+
+## Run UI Only
+
+```bash
+./letsvibedesign ui
+```
+
+UI only expects the API to already be running, usually with `./letsvibedesign api`.
+
+## Validate Provider/Model
+
+```bash
+./letsvibedesign check
 ```
 
 ## Generate with Explicit Options
@@ -41,8 +55,11 @@ desysflow design \
   --source . \
   --out ./desysflow \
   --project ecommerce-system \
+  --model-provider ollama \
+  --model gpt-oss:20b-cloud \
   --language python \
   --cloud aws \
   --style detailed \
-  --web-search auto
+  --web-search auto \
+  --no-interactive
 ```

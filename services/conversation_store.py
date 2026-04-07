@@ -24,7 +24,7 @@ class ConversationStoreConfig:
 
 
 def get_conversation_store_config() -> ConversationStoreConfig:
-    database_url = os.getenv("DATABASE_URL", os.getenv("SUPABASE_DB_URL", "")).strip()
+    database_url = os.getenv("DATABASE_URL", "").strip()
     backend = os.getenv("CHAT_STORE_BACKEND", "auto").strip().lower()
     return ConversationStoreConfig(
         backend=backend,

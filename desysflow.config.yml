@@ -1,0 +1,78 @@
+# ─────────────────────────────────────────────────────────────────
+# DeSysFlow Configuration
+# Edit this file to add, remove, or reorder options.
+# Both the CLI and Web UI read from this config at startup.
+# ─────────────────────────────────────────────────────────────────
+
+# Role personas — controls the lens of the generated design
+roles:
+  - MLOps / AIOps
+  - DevOps
+  - DevSecOps
+  - Principal Architect
+  - Backend Engineer
+  - Frontend Engineer
+  - Platform Engineer
+  - SRE
+
+# Implementation language suggestions
+languages:
+  - Python
+  - TypeScript
+  - Go
+  - Java
+  - Rust
+
+# Report depth / diagram style
+styles:
+  - minimal
+  - balanced
+  - detailed
+
+# Cloud deployment targets
+clouds:
+  - local
+  - aws
+  - gcp
+  - azure
+  - hybrid
+
+# Web search behaviour
+search_modes:
+  - auto
+  - "on"
+  - "off"
+
+# Design routing modes (CLI only)
+design_modes:
+  - smart
+  - fresh
+  - refine
+
+# AI provider options
+providers:
+  - id: openai
+    label: GPT-lover
+    desc: OpenAI GPT models
+    default_model: gpt-4o
+  - id: anthropic
+    label: Claude-lover
+    desc: Anthropic Claude models
+    default_model: claude-sonnet-4-20250514
+  - id: ollama
+    label: Ollama-lover
+    desc: Local models via Ollama
+    default_model: "gpt-oss:20b-cloud"
+
+# ─────────────────────────────────────────────────────────────────
+# Defaults — values used when nothing is explicitly selected
+# ─────────────────────────────────────────────────────────────────
+defaults:
+  project: desysflow-cli
+  role: DevOps
+  language: Python
+  style: balanced
+  cloud: local
+  search_mode: auto
+  design_mode: smart
+  provider: ollama
