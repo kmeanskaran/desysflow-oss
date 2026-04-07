@@ -25,6 +25,8 @@ def extract_json_block(text: str) -> str:
     3. First { ... } or [ ... ] spanning multiple lines
     4. Raw text as-is
     """
+    text = re.sub(r"(?is)<think>.*?</think>", "", text).strip()
+
     # Strategy 1 & 2: fenced code blocks
     pattern = r"```(?:json)?\s*\n?([\s\S]*?)```"
     match = re.search(pattern, text)
@@ -55,6 +57,13 @@ def extract_json_block(text: str) -> str:
     return text.strip()
 
 
+def _repair_json_text(text: str) -> str:
+    """Repair common local-LLM JSON issues without changing valid JSON."""
+    text = text.strip()
+    text = re.sub(r",\s*([}\]])", r"\1", text)
+    return text
+
+
 def parse_json_response(
     raw: str,
     model: Type[T],
@@ -63,7 +72,7 @@ def parse_json_response(
 
     Raises ``ValidationError`` or ``json.JSONDecodeError`` on failure.
     """
-    json_str = extract_json_block(raw)
+    json_str = _repair_json_text(extract_json_block(raw))
     data = json.loads(json_str)
     return model.model_validate(data)
 
@@ -73,7 +82,7 @@ def parse_json_list(
     model: Type[T],
 ) -> List[T]:
     """Parse raw LLM text into a list of validated Pydantic models."""
-    json_str = extract_json_block(raw)
+    json_str = _repair_json_text(extract_json_block(raw))
     data = json.loads(json_str)
     if not isinstance(data, list):
         raise ValueError(f"Expected JSON list, got {type(data).__name__}")
