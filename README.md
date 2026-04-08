@@ -3,7 +3,7 @@
 DesysFlow OSS is a local-first system design generator that turns source code and goals into versioned architecture artifacts.
 
 It includes:
-- A simple CLI (`desysflow`) for one-shot generation and refinement
+- A simple CLI (`desysflow`) for local generation and refinement
 - A local FastAPI backend
 - A lightweight React UI for prompting and artifact inspection
 
@@ -41,7 +41,7 @@ Choose a mode from the prompt, or run directly:
 
 ## Launcher Modes
 
-- `cli`: starts the basic one-shot design workflow (`desysflow design`)
+- `cli`: starts the interactive CLI loop for repeated `desysflow design` runs
 - `dev`: starts API + UI together
 - `api`: starts only FastAPI (`http://localhost:8000/docs`)
 - `ui`: starts only Vite UI (`http://localhost:5173`)
@@ -54,6 +54,16 @@ Run the basic guided CLI:
 ```bash
 ./letsvibedesign cli
 ```
+
+`./letsvibedesign cli` stays open after each generation and shows a `letsvibe>` prompt.
+
+Interactive prompt commands:
+- `Enter` or `run`: run again with normal interactive flow
+- `/design`: asks for a prompt, then runs `desysflow design --prompt "..."`
+- `/design <prompt>`: run directly with that prompt
+- Any plain text (without `/`): treated as a prompt and runs design
+- `/restart`: show launcher options again (`cli`, `dev`, `api`, `ui`, `check`)
+- `/bye`: exit the CLI loop
 
 Run directly with flags:
 
@@ -151,7 +161,7 @@ For local Ollama runs, `OLLAMA_NUM_PREDICT` controls the maximum generated token
 
 ## Guardrails
 
-Set `LLM_GUARDRAIL=true` in `.env` to enable secret-leak detection on LLM output. The guardrail scans for API keys, tokens, database connection strings, and other credential patterns.
+Set `LLM_GUARDRAIL=true` in `.env.example` to enable secret-leak detection on LLM output. The guardrail scans for API keys, tokens, database connection strings, and other credential patterns.
 
 ## Documentation
 

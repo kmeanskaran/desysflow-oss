@@ -11,7 +11,7 @@ from typing import Any, Dict, List
 from schemas.models import AgentState, ArchitectureVariant
 from services.llm import get_llm
 from templates.base_templates import TEMPLATES
-from utils.parser import parse_json_list
+from utils.parser import normalize_llm_text, parse_json_list
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +59,9 @@ def generate_architecture(state: AgentState) -> Dict[str, Any]:
     for attempt in range(1, max_attempts + 1):
         try:
             response = llm.invoke(messages)
-            raw = response.content if hasattr(response, "content") else str(response)
+            raw = normalize_llm_text(
+                response.content if hasattr(response, "content") else response
+            )
             logger.debug("LLM response (attempt %d): %s", attempt, raw[:500])
 
             variants = parse_json_list(raw, ArchitectureVariant)

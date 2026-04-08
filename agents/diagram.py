@@ -11,6 +11,7 @@ from typing import Any, Dict
 
 from schemas.models import AgentState
 from services.llm import get_llm
+from utils.parser import normalize_llm_text
 
 logger = logging.getLogger(__name__)
 
@@ -85,7 +86,9 @@ def diagram_generator(state: AgentState) -> Dict[str, Any]:
 
     try:
         response = llm.invoke(messages)
-        raw = response.content if hasattr(response, "content") else str(response)
+        raw = normalize_llm_text(
+            response.content if hasattr(response, "content") else response
+        )
         logger.debug("Diagram response: %s", raw[:500])
 
         mermaid_code = _sanitise_mermaid(raw)
@@ -159,7 +162,9 @@ def generate_cloud_diagram(
 
     try:
         response = llm.invoke(messages)
-        raw = response.content if hasattr(response, "content") else str(response)
+        raw = normalize_llm_text(
+            response.content if hasattr(response, "content") else response
+        )
         mermaid_code = _sanitise_mermaid(raw)
         logger.info("Cloud diagram (%s) generated (%d chars)", provider, len(mermaid_code))
         return mermaid_code

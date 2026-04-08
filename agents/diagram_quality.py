@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Tuple
 
 from schemas.models import AgentState
 from services.llm import get_llm
-from utils.parser import extract_json_block
+from utils.parser import extract_json_block, normalize_llm_text
 
 logger = logging.getLogger(__name__)
 
@@ -184,7 +184,9 @@ def diagram_quality_agent(state: AgentState) -> Dict[str, Any]:
                 {"role": "user", "content": user_content},
             ]
         )
-        raw = response.content if hasattr(response, "content") else str(response)
+        raw = normalize_llm_text(
+            response.content if hasattr(response, "content") else response
+        )
         data = json.loads(extract_json_block(raw))
 
         mermaid = _sanitise_mermaid(str(data.get("mermaid_code", "")))

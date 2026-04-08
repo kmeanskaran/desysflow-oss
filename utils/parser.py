@@ -57,6 +57,29 @@ def extract_json_block(text: str) -> str:
     return text.strip()
 
 
+def normalize_llm_text(raw: Any) -> str:
+    """Flatten provider-specific LLM payloads into a plain text response."""
+    if raw is None:
+        return ""
+    if isinstance(raw, str):
+        return raw
+    if isinstance(raw, list):
+        parts = [normalize_llm_text(item) for item in raw]
+        return "\n".join(part for part in parts if part).strip()
+    if isinstance(raw, dict):
+        if isinstance(raw.get("text"), str):
+            return raw["text"]
+        if isinstance(raw.get("content"), (str, list, dict)):
+            return normalize_llm_text(raw["content"])
+        if isinstance(raw.get("value"), str):
+            return raw["value"]
+        if isinstance(raw.get("output_text"), str):
+            return raw["output_text"]
+        parts = [normalize_llm_text(value) for value in raw.values()]
+        return "\n".join(part for part in parts if part).strip()
+    return str(raw)
+
+
 def _repair_json_text(text: str) -> str:
     """Repair common local-LLM JSON issues without changing valid JSON."""
     text = text.strip()
@@ -73,6 +96,8 @@ def parse_json_response(
     Raises ``ValidationError`` or ``json.JSONDecodeError`` on failure.
     """
     json_str = _repair_json_text(extract_json_block(raw))
+    if not json_str:
+        raise ValueError("LLM returned an empty response")
     data = json.loads(json_str)
     return model.model_validate(data)
 
@@ -83,6 +108,8 @@ def parse_json_list(
 ) -> List[T]:
     """Parse raw LLM text into a list of validated Pydantic models."""
     json_str = _repair_json_text(extract_json_block(raw))
+    if not json_str:
+        raise ValueError("LLM returned an empty response")
     data = json.loads(json_str)
     if not isinstance(data, list):
         raise ValueError(f"Expected JSON list, got {type(data).__name__}")

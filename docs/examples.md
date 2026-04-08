@@ -6,6 +6,8 @@
 ./letsvibedesign cli
 ```
 
+Then keep working from the `letsvibe>` prompt with `run`, `/design <prompt>`, `/restart`, or `/bye`.
+
 Or run the command directly:
 
 ```bash

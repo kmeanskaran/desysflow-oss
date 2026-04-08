@@ -14,7 +14,7 @@ from typing import Any, Dict
 
 from schemas.models import AgentState
 from services.llm import get_llm
-from utils.parser import extract_json_block
+from utils.parser import extract_json_block, normalize_llm_text
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +110,9 @@ def _parse_json_with_repair(raw: str, llm, label: str) -> dict:
         {"role": "system", "content": _JSON_REPAIR_PROMPT},
         {"role": "user", "content": cleaned},
     ])
-    repaired_raw = repair_resp.content if hasattr(repair_resp, "content") else str(repair_resp)
+    repaired_raw = normalize_llm_text(
+        repair_resp.content if hasattr(repair_resp, "content") else repair_resp
+    )
     repaired_candidate = _clean_json_text(extract_json_block(repaired_raw))
     return json.loads(repaired_candidate)
 
@@ -142,7 +144,9 @@ def report_generator(state: AgentState) -> Dict[str, Any]:
             {"role": "system", "content": _HLD_SYSTEM_PROMPT},
             {"role": "user", "content": context + "Generate the HLD report as a JSON object."},
         ])
-        hld_raw = hld_resp.content if hasattr(hld_resp, "content") else str(hld_resp)
+        hld_raw = normalize_llm_text(
+            hld_resp.content if hasattr(hld_resp, "content") else hld_resp
+        )
         logger.debug("HLD response: %s", hld_raw[:500])
         hld_report = _parse_json_with_repair(hld_raw, llm, "HLD")
         logger.info("HLD report generated successfully")
@@ -165,7 +169,9 @@ def report_generator(state: AgentState) -> Dict[str, Any]:
             {"role": "system", "content": _LLD_SYSTEM_PROMPT},
             {"role": "user", "content": context + "Generate the LLD report as a JSON object."},
         ])
-        lld_raw = lld_resp.content if hasattr(lld_resp, "content") else str(lld_resp)
+        lld_raw = normalize_llm_text(
+            lld_resp.content if hasattr(lld_resp, "content") else lld_resp
+        )
         logger.debug("LLD response: %s", lld_raw[:500])
         lld_report = _parse_json_with_repair(lld_raw, llm, "LLD")
         logger.info("LLD report generated successfully")
@@ -268,7 +274,9 @@ def generate_cloud_reports(
             {"role": "system", "content": _CLOUD_HLD_PROMPT.format(provider=label)},
             {"role": "user", "content": context + f"Generate the HLD for {label}."},
         ])
-        hld_raw = hld_resp.content if hasattr(hld_resp, "content") else str(hld_resp)
+        hld_raw = normalize_llm_text(
+            hld_resp.content if hasattr(hld_resp, "content") else hld_resp
+        )
         hld_report = _parse_json_with_repair(hld_raw, llm, f"Cloud HLD ({provider})")
         logger.info("Cloud HLD (%s) generated", provider)
     except Exception as exc:
@@ -282,7 +290,9 @@ def generate_cloud_reports(
             {"role": "system", "content": _CLOUD_LLD_PROMPT.format(provider=label)},
             {"role": "user", "content": context + f"Generate the LLD for {label}."},
         ])
-        lld_raw = lld_resp.content if hasattr(lld_resp, "content") else str(lld_resp)
+        lld_raw = normalize_llm_text(
+            lld_resp.content if hasattr(lld_resp, "content") else lld_resp
+        )
         lld_report = _parse_json_with_repair(lld_raw, llm, f"Cloud LLD ({provider})")
         logger.info("Cloud LLD (%s) generated", provider)
     except Exception as exc:

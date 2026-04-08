@@ -34,7 +34,16 @@ _SECRET_PATTERNS: list[str] = [
     r"(?i)export\s+(OPENAI_|ANTHROPIC_|AWS_|AZURE_|GCP_|SECRET_|TOKEN_|API_KEY|PASSWORD)",
 ]
 
-_SECRET_RE = re.compile("|".join(_SECRET_PATTERNS), re.IGNORECASE)
+
+def _compile_secret_patterns(patterns: list[str]) -> list[re.Pattern[str]]:
+    """Compile secret patterns safely even when they contain inline flags."""
+    compiled: list[re.Pattern[str]] = []
+    for pattern in patterns:
+        compiled.append(re.compile(pattern))
+    return compiled
+
+
+_SECRET_RES = _compile_secret_patterns(_SECRET_PATTERNS)
 _REDACT_COUNTER = 0
 
 
@@ -72,9 +81,8 @@ class _SecretOutputGuardrail:
         text = _extract_text(output)
         if not text:
             return
-        matches = _SECRET_RE.finditer(text)
         redacted: list[str] = []
-        for match in matches:
+        for match in _iter_secret_matches(text):
             _REDACT_COUNTER += 1
             label = f"REDACTED-{_REDACT_COUNTER}"
             redacted.append(f"[{label}] {match.group().strip()}")
@@ -100,6 +108,16 @@ def _extract_text(output: Any) -> str:
     return str(output)
 
 
+def _iter_secret_matches(text: str):
+    """Yield all secret matches across compiled patterns."""
+    for regex in _SECRET_RES:
+        yield from regex.finditer(text)
+
+
+def _contains_secret(text: str) -> bool:
+    return any(regex.search(text) for regex in _SECRET_RES)
+
+
 def with_secret_guardrail(llm: Any) -> Any:
     """Wrap a LangChain ChatModel / LLM / Runnable so its output is scanned for secrets.
 
@@ -117,7 +135,7 @@ def redact_secrets(text: str) -> tuple[str, list[str]]:
     """
     global _REDACT_COUNTER
     redacted: list[str] = []
-    for match in _SECRET_RE.finditer(text):
+    for match in _iter_secret_matches(text):
         _REDACT_COUNTER += 1
         label = f"REDACTED-{_REDACT_COUNTER}"
         redacted.append(f"[{label}] {match.group().strip()}")
@@ -151,7 +169,7 @@ def check_source_for_secrets(source_dir: str, *, max_files: int = 500) -> list[s
             except Exception:
                 continue
             joined = "\n".join(first_lines)
-            if _SECRET_RE.search(joined):
+            if _contains_secret(joined):
                 warnings.append(f"  {path}: possible secret pattern — review before sharing generated docs")
             scanned += 1
     return warnings

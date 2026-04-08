@@ -26,7 +26,7 @@ from agents.reviser import revision_agent
 from agents.report_generator import generate_cloud_reports
 from agents.report_generator import report_generator
 from agents.cloud_infra import cloud_infra_agent
-from graph.workflow import get_graph, run_workflow
+from graph.workflow import run_workflow, run_workflow_with_updates
 from schemas.models import (
     ConversationDetailResponse,
     ConversationListResponse,
@@ -69,6 +69,13 @@ from utils.session_memory import (
     update_memory_after_run,
     write_session_note,
 )
+from utils.workflow_contract import (
+    DESIGN_NODE_TO_STAGE,
+    DESIGN_PROGRESS_STEPS,
+    FOLLOWUP_NODE_TO_STAGE,
+    FOLLOWUP_PROGRESS_STEPS,
+    validate_delivery_payload,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -90,19 +97,6 @@ def _env_int(name: str, default: int) -> int:
 _CRITIC_MAX_RUNS_PER_SESSION = _env_int("CRITIC_MAX_RUNS_PER_SESSION", 3)
 _CRITIC_ITERATION_LIMIT = _env_int("CRITIC_ITERATION_LIMIT", 3)
 _CRITIC_PASS_MAX_RISK = _env_int("CRITIC_PASS_MAX_RISK", 45)
-
-_ORCHESTRATION_STEPS = [
-    {"key": "extract_requirements", "label": "Extracting requirements"},
-    {"key": "select_template", "label": "Selecting architecture template"},
-    {"key": "generate_architecture", "label": "Generating architecture variants"},
-    {"key": "inject_edge_cases", "label": "Injecting edge cases"},
-    {"key": "select_primary_architecture", "label": "Selecting base architecture"},
-    {"key": "diagram_generator", "label": "Generating base diagram"},
-    {"key": "diagram_quality_agent", "label": "Refining diagram quality"},
-    {"key": "report_generator", "label": "Building HLD/LLD reports"},
-    {"key": "cloud_infra_agent", "label": "Mapping cloud infrastructure"},
-]
-
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -155,6 +149,10 @@ def _operation_mark_step(operation_id: str, step_key: str) -> None:
                 return
 
 
+def _operation_mark_stage(operation_id: str, stage_key: str) -> None:
+    _operation_mark_step(operation_id, stage_key)
+
+
 def _operation_complete(operation_id: str, result: Dict[str, Any]) -> None:
     with _OPERATIONS_LOCK:
         op = _OPERATIONS.get(operation_id)
@@ -181,35 +179,20 @@ def _run_workflow_with_progress(
     diagram_style: str,
     preferred_language: str,
     operation_id: str,
+    node_to_stage: Dict[str, str],
+    initial_stage_key: str,
 ) -> Dict[str, Any]:
-    initial_state: Dict[str, Any] = {
-        "user_input": user_input,
-        "diagram_style": diagram_style,
-        "preferred_language": preferred_language,
-        "requirements": {},
-        "template": "",
-        "architectures": [],
-        "edge_cases": [],
-        "critic_feedback": [],
-        "revised_architecture": {},
-        "mermaid_code": "",
-        "excalidraw_diagram": {},
-        "diagram_quality_checks": [],
-        "hld_report": {},
-        "lld_report": {},
-        "tech_stack": {},
-        "cloud_infrastructure": {},
-    }
-    state = dict(initial_state)
-    graph = get_graph()
-    for update in graph.stream(initial_state, stream_mode="updates"):
-        if not isinstance(update, dict):
-            continue
-        for node_key, node_payload in update.items():
-            _operation_mark_step(operation_id, str(node_key))
-            if isinstance(node_payload, dict):
-                state.update(node_payload)
-    return state
+    _operation_mark_stage(operation_id, initial_stage_key)
+    return run_workflow_with_updates(
+        user_input,
+        diagram_style=diagram_style,
+        preferred_language=preferred_language,
+        on_update=lambda node_key, _payload, _state: (
+            _operation_mark_stage(operation_id, node_to_stage[node_key])
+            if node_key in node_to_stage
+            else None
+        ),
+    )
 
 
 def _apply_request_model_override(
@@ -518,7 +501,7 @@ async def _run_design_async_operation(
         llm_config = get_llm_config()
         warnings.append(
             f"{llm_config.provider} is unreachable at "
-            f"{llm_config.base_url}. The workflow ran in fallback mode with template/default outputs."
+            f"{llm_config.base_url}. The workflow may fail or return incomplete outputs until the provider is reachable."
         )
 
     try:
@@ -528,6 +511,8 @@ async def _run_design_async_operation(
             diagram_style,
             preferred_language,
             operation_id,
+            DESIGN_NODE_TO_STAGE,
+            "scope",
         )
         result.setdefault("requirements", {})["preferred_language"] = preferred_language
         result.setdefault("critic_run_limit", _CRITIC_MAX_RUNS_PER_SESSION)
@@ -536,6 +521,7 @@ async def _run_design_async_operation(
         result = _attach_mermaid_metadata(result, source="design_async")
         critic_feedback = result.get("critic_feedback", [])
         critic_summary, system_design_doc, non_technical_doc = await _run_postprocessors(result)
+        validate_delivery_payload(result, system_design_doc, non_technical_doc)
 
         result["system_design_doc"] = system_design_doc
         result["non_technical_doc"] = non_technical_doc
@@ -613,7 +599,7 @@ async def _run_followup_async_operation(
         llm_config = get_llm_config()
         warnings.append(
             f"{llm_config.provider} is unreachable at "
-            f"{llm_config.base_url}. The workflow ran in fallback mode with template/default outputs."
+            f"{llm_config.base_url}. The workflow may fail or return incomplete outputs until the provider is reachable."
         )
 
     try:
@@ -627,6 +613,8 @@ async def _run_followup_async_operation(
             diagram_style,
             preferred_language,
             operation_id,
+            FOLLOWUP_NODE_TO_STAGE,
+            "context",
         )
         previous_result = dict(session.get("latest_result", {}))
         if request.preserve_core_diagram:
@@ -642,6 +630,7 @@ async def _run_followup_async_operation(
         result = _attach_mermaid_metadata(result, source="followup_async", previous_result=previous_result)
         critic_feedback = result.get("critic_feedback", [])
         critic_summary, system_design_doc, non_technical_doc = await _run_postprocessors(result)
+        validate_delivery_payload(result, system_design_doc, non_technical_doc)
 
         result["system_design_doc"] = system_design_doc
         result["non_technical_doc"] = non_technical_doc
@@ -751,7 +740,7 @@ async def design_system_async(request: DesignRequest) -> Dict[str, Any]:
     )
 
     try:
-        operation_id = _create_operation("design", list(_ORCHESTRATION_STEPS))
+        operation_id = _create_operation("design", list(DESIGN_PROGRESS_STEPS))
         asyncio.create_task(
             _run_design_async_operation(
                 operation_id=operation_id,
@@ -791,7 +780,7 @@ async def design_followup_async(request: FollowUpRequest) -> Dict[str, Any]:
     )
 
     try:
-        operation_id = _create_operation("followup", list(_ORCHESTRATION_STEPS))
+        operation_id = _create_operation("followup", list(FOLLOWUP_PROGRESS_STEPS))
         asyncio.create_task(_run_followup_async_operation(operation_id=operation_id, request=request))
         return {"operation_id": operation_id, "status": "running"}
     finally:
@@ -835,7 +824,7 @@ async def design_system(request: DesignRequest) -> DesignResponse:
     if not llm_available:
         warnings.append(
             f"{llm_config.provider} is unreachable at "
-            f"{llm_config.base_url}. The workflow ran in fallback mode with template/default outputs."
+            f"{llm_config.base_url}. The workflow may fail or return incomplete outputs until the provider is reachable."
         )
 
     try:
@@ -848,6 +837,7 @@ async def design_system(request: DesignRequest) -> DesignResponse:
         result = _attach_mermaid_metadata(result, source="design")
         critic_feedback = result.get("critic_feedback", [])
         critic_summary, system_design_doc, non_technical_doc = await _run_postprocessors(result)
+        validate_delivery_payload(result, system_design_doc, non_technical_doc)
 
         result["system_design_doc"] = system_design_doc
         result["non_technical_doc"] = non_technical_doc
@@ -1099,7 +1089,7 @@ async def design_followup(request: FollowUpRequest) -> FollowUpResponse:
         llm_config = get_llm_config()
         warnings.append(
             f"{llm_config.provider} is unreachable at "
-            f"{llm_config.base_url}. The workflow ran in fallback mode with template/default outputs."
+            f"{llm_config.base_url}. The workflow may fail or return incomplete outputs until the provider is reachable."
         )
 
     try:
@@ -1122,6 +1112,7 @@ async def design_followup(request: FollowUpRequest) -> FollowUpResponse:
         result = _attach_mermaid_metadata(result, source="followup", previous_result=previous_result)
         critic_feedback = result.get("critic_feedback", [])
         critic_summary, system_design_doc, non_technical_doc = await _run_postprocessors(result)
+        validate_delivery_payload(result, system_design_doc, non_technical_doc)
 
         result["system_design_doc"] = system_design_doc
         result["non_technical_doc"] = non_technical_doc

@@ -10,7 +10,7 @@ from typing import Any, Dict, List
 
 from services.llm import get_critic_llm
 from services.search import format_search_results, search_web, should_use_web_search
-from utils.parser import extract_json_block
+from utils.parser import extract_json_block, normalize_llm_text
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +71,9 @@ def run_design_judge(payload: Dict[str, Any], focus: str = "", search_mode: str 
 
     try:
         response = llm.invoke(messages)
-        raw = response.content if hasattr(response, "content") else str(response)
+        raw = normalize_llm_text(
+            response.content if hasattr(response, "content") else response
+        )
         parsed = json.loads(extract_json_block(raw))
         return _normalize_judge_output(parsed)
     except Exception as exc:

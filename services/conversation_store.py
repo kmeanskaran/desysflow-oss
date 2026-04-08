@@ -26,9 +26,10 @@ class ConversationStoreConfig:
 def get_conversation_store_config() -> ConversationStoreConfig:
     database_url = os.getenv("DATABASE_URL", "").strip()
     backend = os.getenv("CHAT_STORE_BACKEND", "auto").strip().lower()
+    db_path = os.getenv("CHAT_DB_PATH", "").strip() or default_chat_db_path()
     return ConversationStoreConfig(
         backend=backend,
-        db_path=os.getenv("CHAT_DB_PATH", default_chat_db_path()),
+        db_path=db_path,
         database_url=database_url,
         redis_url=os.getenv("REDIS_URL", "redis://localhost:6379/0"),
         cache_ttl_seconds=int(os.getenv("CHAT_CACHE_TTL_SECONDS", "60")),

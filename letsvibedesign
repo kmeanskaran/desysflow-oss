@@ -19,7 +19,7 @@ EOF
 }
 
 ensure_bootstrap() {
-  if [ ! -f ".env" ] || [ ! -d ".venv" ] || [ ! -d "ui/node_modules" ]; then
+  if [ ! -f ".env.example" ] || [ ! -d ".venv" ] || [ ! -d "ui/node_modules" ]; then
     echo "First-time setup required..."
     ./scripts/bootstrap.sh
   fi
@@ -50,9 +50,9 @@ EOF
 }
 
 source_env() {
-  if [ -f ".env" ]; then
+  if [ -f ".env.example" ]; then
     set -a
-    . ./.env
+    . ./.env.example
     set +a
   fi
 }
@@ -61,9 +61,7 @@ run_mode() {
   local mode="$1"
   case "$mode" in
     cli)
-      ensure_bootstrap
-      source_env
-      exec uv run desysflow design
+      run_cli_loop
       ;;
     dev)
       ensure_bootstrap
@@ -94,6 +92,93 @@ run_mode() {
       exit 1
       ;;
   esac
+}
+
+run_cli_loop() {
+  ensure_bootstrap
+  source_env
+
+  echo "Starting CLI design flow."
+  echo "After each run:"
+  echo "  - /design <prompt> to run with a prompt"
+  echo "  - /design to enter a prompt interactively"
+  echo "  - /restart to pick mode again"
+  echo "  - /bye to exit"
+
+  local should_run=1
+  local choice=""
+  local next_prompt=""
+
+  run_design() {
+    local design_prompt="${1:-}"
+    if [ -n "$design_prompt" ]; then
+      uv run desysflow design --prompt "$design_prompt"
+    else
+      uv run desysflow design
+    fi
+  }
+
+  while true; do
+    if [ "$should_run" -eq 1 ]; then
+      if ! run_design "$next_prompt"; then
+        echo "Design run exited with an error. You can try again, /restart, or /bye."
+      fi
+      next_prompt=""
+    fi
+
+    printf "letsvibe> "
+    if ! read -r choice; then
+      break
+    fi
+
+    case "${choice}" in
+      ""|/run|run)
+        should_run=1
+        ;;
+      /design)
+        printf "prompt> "
+        if read -r next_prompt; then
+          should_run=1
+        else
+          break
+        fi
+        ;;
+      /design\ *)
+        next_prompt="${choice#/design }"
+        should_run=1
+        ;;
+      /bye|bye|/exit|exit|quit|/quit)
+        echo "Bye."
+        break
+        ;;
+      /restart|restart)
+        choice="$(pick_mode)"
+        if [ "$choice" = "cli" ]; then
+          should_run=1
+        else
+          run_mode "$choice"
+          break
+        fi
+        ;;
+      /help|help)
+        echo "Commands:"
+        echo "  [Enter|run]         run design again"
+        echo "  /design             ask for prompt, then run"
+        echo "  /design <prompt>    run with prompt"
+        echo "  /restart            show mode picker"
+        echo "  /bye                exit"
+        should_run=0
+        ;;
+      /*)
+        echo "Unknown input: ${choice}. Use /help, /restart, or /bye."
+        should_run=0
+        ;;
+      *)
+        next_prompt="${choice}"
+        should_run=1
+        ;;
+    esac
+  done
 }
 
 MODE="${1:-}"

@@ -4,9 +4,8 @@ LangGraph workflow — compiles the full agent pipeline into a runnable graph.
 
 from __future__ import annotations
 
-import json
 import logging
-from typing import Any, Dict
+from typing import Any, Callable, Dict
 
 from langgraph.graph import END, StateGraph
 
@@ -19,6 +18,7 @@ from agents.report_generator import report_generator
 from rules.edge_cases import inject_edge_cases as _inject_edge_cases
 from schemas.models import AgentState, Requirements
 from templates.base_templates import select_template as _select_template
+from utils.workflow_contract import validate_workflow_result
 
 logger = logging.getLogger(__name__)
 
@@ -100,26 +100,12 @@ def get_graph():
 # Public API
 # ---------------------------------------------------------------------------
 
-def run_workflow(
+def _build_initial_state(
     user_input: str,
-    diagram_style: str = "balanced",
-    preferred_language: str = "Python",
-) -> Dict[str, Any]:
-    """Execute the full agent pipeline and return the final state.
-
-    Parameters
-    ----------
-    user_input : str
-        Free-text system design request from the user.
-
-    Returns
-    -------
-    Dict[str, Any]
-        The completed ``AgentState`` dictionary.
-    """
-    logger.info("Starting workflow for input: %s", user_input[:120])
-
-    initial_state: AgentState = {
+    diagram_style: str,
+    preferred_language: str,
+) -> AgentState:
+    return {
         "user_input": user_input,
         "diagram_style": diagram_style,
         "preferred_language": preferred_language,
@@ -138,8 +124,52 @@ def run_workflow(
         "cloud_infrastructure": {},
     }
 
-    graph = get_graph()
-    result = graph.invoke(initial_state)
 
+def run_workflow_with_updates(
+    user_input: str,
+    diagram_style: str = "balanced",
+    preferred_language: str = "Python",
+    on_update: Callable[[str, Dict[str, Any], Dict[str, Any]], None] | None = None,
+) -> Dict[str, Any]:
+    """Execute the graph while exposing per-node updates to callers."""
+    logger.info("Starting workflow for input: %s", user_input[:120])
+
+    initial_state = _build_initial_state(user_input, diagram_style, preferred_language)
+    state: Dict[str, Any] = dict(initial_state)
+    graph = get_graph()
+
+    for update in graph.stream(initial_state, stream_mode="updates"):
+        if not isinstance(update, dict):
+            continue
+        for node_key, node_payload in update.items():
+            if isinstance(node_payload, dict):
+                state.update(node_payload)
+                if on_update:
+                    on_update(str(node_key), node_payload, dict(state))
+
+    validate_workflow_result(state)
     logger.info("Workflow completed successfully")
-    return dict(result)
+    return state
+
+def run_workflow(
+    user_input: str,
+    diagram_style: str = "balanced",
+    preferred_language: str = "Python",
+) -> Dict[str, Any]:
+    """Execute the full agent pipeline and return the final state.
+
+    Parameters
+    ----------
+    user_input : str
+        Free-text system design request from the user.
+
+    Returns
+    -------
+    Dict[str, Any]
+        The completed ``AgentState`` dictionary.
+    """
+    return run_workflow_with_updates(
+        user_input,
+        diagram_style=diagram_style,
+        preferred_language=preferred_language,
+    )

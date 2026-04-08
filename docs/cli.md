@@ -13,6 +13,8 @@ Launcher shortcut:
 ./letsvibedesign cli
 ```
 
+`./letsvibedesign cli` opens a persistent launcher loop. After each run it returns to a `letsvibe>` prompt instead of exiting immediately.
+
 ## `design`
 
 Generate a versioned design package from current source.
@@ -58,6 +60,21 @@ When flags are omitted in an interactive terminal, CLI asks for:
 - input mode (`vibe-now` or `ask`)
 
 Choices use plain typed/numeric selection.
+
+Launcher loop commands:
+- `Enter` or `run`: run `desysflow design` again with normal interactive prompts
+- `/design`: ask for a prompt, then run `desysflow design --prompt "..."`
+- `/design <prompt>`: run directly with that prompt
+- plain text without `/`: treat the text as a prompt and run design
+- `/restart`: reopen the launcher mode picker
+- `/bye`: exit the loop
+
+Run log format uses tagged CLI lines such as:
+- `🚀 [run]` for the run header
+- `📍 [stage]` for workflow transitions
+- `⏳ [status]` for progress updates
+- `✅ [done]` for completion details
+- `⚠️ [warn]` and `💡 [hint]` for operator guidance
 
 You can also pass model settings explicitly:
 

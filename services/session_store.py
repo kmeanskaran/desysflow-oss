@@ -23,7 +23,7 @@ class SessionStoreConfig:
 def get_session_store_config() -> SessionStoreConfig:
     """Load session-store configuration from environment variables."""
     return SessionStoreConfig(
-        db_path=os.getenv("SESSION_DB_PATH", default_session_db_path()),
+        db_path=os.getenv("SESSION_DB_PATH", "").strip() or default_session_db_path(),
     )
 
 

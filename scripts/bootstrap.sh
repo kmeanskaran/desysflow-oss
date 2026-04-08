@@ -79,7 +79,7 @@ elif [ "$provider" = "anthropic" ]; then
   anthropic_api_key="$api_key"
 fi
 
-cat > .env <<EOF
+cat > .env.example <<EOF
 DESYSFLOW_STORAGE_ROOT=./.desflow
 CHAT_STORE_BACKEND=sqlite
 CHAT_DB_PATH=
@@ -106,10 +106,10 @@ LLM_GUARDRAIL=true
 VITE_API_PROXY_TARGET=http://localhost:8000
 EOF
 
-echo "Saved local config to .env"
+echo "Saved local config to .env.example"
 echo "Checking model availability..."
 if ! uv run python scripts/check_model.py; then
-  echo "Model check failed. Update .env or install the Ollama model before running DesysFlow."
+  echo "Model check failed. Update .env.example or install the Ollama model before running DesysFlow."
   exit 1
 fi
 

@@ -19,7 +19,7 @@ This will:
 - Install Python dependencies
 - Install UI dependencies
 - Ask for model provider/model
-- Write local `.env`
+- Write local `.env.example`
 - Validate model availability
 
 ## 2. Run Modes
@@ -35,7 +35,7 @@ This will:
 Notes:
 - `./letsvibedesign` (without args) opens an interactive wizard with the same 5 modes.
 - `dev` runs both services and prints both URLs.
-- `cli` runs the simple one-shot `desysflow design` workflow.
+- `cli` runs the persistent CLI loop and returns to `letsvibe>` after each generation.
 
 ## 3. Backend and UI URLs
 
@@ -49,6 +49,13 @@ Guided:
 ```bash
 ./letsvibedesign cli
 ```
+
+The launcher stays open after each run and accepts:
+- `Enter` or `run` to run again
+- `/design` to enter a prompt interactively
+- `/design <prompt>` to run directly with that prompt
+- `/restart` to reopen the mode picker
+- `/bye` to exit
 
 Direct:
 
@@ -74,7 +81,7 @@ Then:
 
 ## 6. Configuration
 
-Environment variables are stored in local `.env`. Typical keys:
+Environment variables are stored in local `.env.example`. Typical keys:
 - `MODEL_PROVIDER`
 - `OLLAMA_MODEL`
 - `OLLAMA_TIMEOUT`

@@ -10,7 +10,7 @@ from typing import Any, Dict, List
 
 from schemas.models import AgentState
 from services.llm import get_llm
-from utils.parser import safe_parse_string_list
+from utils.parser import normalize_llm_text, safe_parse_string_list
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +53,9 @@ def critic_agent(state: AgentState) -> Dict[str, Any]:
 
     try:
         response = llm.invoke(messages)
-        raw = response.content if hasattr(response, "content") else str(response)
+        raw = normalize_llm_text(
+            response.content if hasattr(response, "content") else response
+        )
         logger.debug("Critic response: %s", raw[:500])
         feedback = safe_parse_string_list(raw)
         logger.info("Critic produced %d findings", len(feedback))
@@ -94,7 +96,9 @@ def run_critic_standalone(architecture: Dict[str, Any]) -> Dict[str, List[str]]:
             {"role": "system", "content": _SYSTEM_PROMPT},
             {"role": "user", "content": review_prompt},
         ])
-        raw1 = resp1.content if hasattr(resp1, "content") else str(resp1)
+        raw1 = normalize_llm_text(
+            resp1.content if hasattr(resp1, "content") else resp1
+        )
         feedback = safe_parse_string_list(raw1)
     except Exception as exc:
         logger.error("Standalone critic failed: %s", exc)
@@ -110,7 +114,9 @@ def run_critic_standalone(architecture: Dict[str, Any]) -> Dict[str, List[str]]:
             )},
             {"role": "user", "content": improvement_prompt},
         ])
-        raw2 = resp2.content if hasattr(resp2, "content") else str(resp2)
+        raw2 = normalize_llm_text(
+            resp2.content if hasattr(resp2, "content") else resp2
+        )
         improvements = safe_parse_string_list(raw2)
     except Exception as exc:
         logger.error("Standalone improvement suggestions failed: %s", exc)

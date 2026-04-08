@@ -10,7 +10,7 @@ from typing import Any, Dict
 
 from schemas.models import AgentState, ArchitectureVariant
 from services.llm import get_llm
-from utils.parser import parse_json_response
+from utils.parser import normalize_llm_text, parse_json_response
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +61,9 @@ def revision_agent(state: AgentState) -> Dict[str, Any]:
     for attempt in range(1, max_attempts + 1):
         try:
             response = llm.invoke(messages)
-            raw = response.content if hasattr(response, "content") else str(response)
+            raw = normalize_llm_text(
+                response.content if hasattr(response, "content") else response
+            )
             logger.debug("Revision response (attempt %d): %s", attempt, raw[:500])
 
             revised = parse_json_response(raw, ArchitectureVariant)

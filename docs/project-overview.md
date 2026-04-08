@@ -7,7 +7,7 @@ DesysFlow OSS is an open-source, local-first system design workspace focused on 
 Current scope includes:
 - source-aware architecture generation
 - versioned technical artifacts
-- simple CLI workflows for generation and refinement
+- interactive CLI workflows for generation and refinement
 - local UI for browsing and follow-up prompts
 - async API operation tracking for UI progress
 - local persistence for generated artifacts and UI conversations
@@ -56,3 +56,5 @@ DesysFlow includes an optional secret-leak guardrail (`services/guardrails.py`) 
 ```bash
 LLM_GUARDRAIL=true
 ```
+
+The local launcher and helper scripts read this from `.env.example`.

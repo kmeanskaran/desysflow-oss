@@ -17,9 +17,15 @@ import yaml
 
 from services.storage_paths import get_storage_root
 from services.llm import check_llm_status, get_llm_config, list_ollama_models
-from graph.workflow import run_workflow
+from graph.workflow import run_workflow_with_updates
 from utils.design_doc import build_system_design_doc
 from utils.non_technical_doc import build_non_technical_doc
+from utils.workflow_contract import (
+    DESIGN_NODE_TO_STAGE,
+    DESIGN_PROGRESS_STEPS,
+    FOLLOWUP_NODE_TO_STAGE,
+    FOLLOWUP_PROGRESS_STEPS,
+)
 
 # Config loader
 _CONFIG_CACHE: dict[str, Any] | None = None
@@ -115,6 +121,23 @@ SECRET_PATTERNS = [
 ]
 TOP_FILE_LIMIT = 60
 REVIEW_LOOP_LIMIT = 2
+
+LOG_EMOJI = {
+    "run": "🚀",
+    "cmd": "🧭",
+    "params": "🧩",
+    "stage": "📍",
+    "status": "⏳",
+    "done": "✅",
+    "warn": "⚠️",
+    "hint": "💡",
+}
+
+
+def log_line(kind: str, message: str) -> None:
+    emoji = LOG_EMOJI.get(kind, "•")
+    print(f"{emoji} [{kind}] {message}")
+
 
 HLD_REQUIRED_SECTIONS = [
     "## Overview",
@@ -217,13 +240,19 @@ def _provider_defaults() -> dict[str, dict[str, str]]:
     return result
 
 
-def _prompt_provider() -> str:
+def _prompt_provider(default: str = "") -> str:
     providers = cfg_providers()
     print("")
+    default_idx = None
     for i, p in enumerate(providers, 1):
+        if p["id"] == default:
+            default_idx = i
         print(f"  {i}) {p['label']}  ({p.get('desc', p['id'])})")
     while True:
-        r = input(f"Select provider [1-{len(providers)}]: ").strip()
+        suffix = f" default: {default_idx}" if default_idx is not None else ""
+        r = input(f"Select provider [1-{len(providers)}]{suffix}: ").strip()
+        if not r and default_idx is not None:
+            return default
         try:
             idx = int(r) - 1
             if 0 <= idx < len(providers):
@@ -233,32 +262,48 @@ def _prompt_provider() -> str:
         print(f"  Invalid. Enter 1-{len(providers)}.")
 
 
-def _prompt_model(provider: str, installed: list[str]) -> str:
-    default = _provider_defaults().get(provider, {}).get("model", "")
+def _prompt_model(provider: str, installed: list[str], default: str = "") -> str:
+    default = default or _provider_defaults().get(provider, {}).get("model", "")
     if provider == "ollama":
         if not installed:
             print("  No Ollama models installed.")
             print("  Install one first:  ollama pull <model>")
             return ""
         print(f"  Installed models: {', '.join(installed)}")
-        default = installed[0]
+        if not default:
+            default = installed[0]
     placeholder = f" (default: {default})" if default else ": "
     name = input(f"  Model name{placeholder}").strip()
     return name or default
 
 
-def _prompt_api_key(provider: str) -> str:
-    return input(f"  API key for {provider}: ").strip()
+def _prompt_api_key(provider: str, current: str = "") -> str:
+    prompt = f"  API key for {provider}"
+    if current:
+        prompt += " (press Enter to keep existing)"
+    prompt += ": "
+    value = input(prompt).strip()
+    return value or current
 
 
 def resolve_model(cfg: RunConfig) -> RunConfig:
     """Resolve provider → model name → API key from CLI flag → env var → interactive prompt."""
     interactive = (not cfg.non_interactive) and os.isatty(0)
+    model_flags_supplied = any(
+        [
+            cfg.model_provider.strip(),
+            cfg.model_name.strip(),
+            cfg.api_key.strip(),
+            cfg.base_url.strip(),
+        ]
+    )
 
-    # 1. Provider: CLI flag → env var → interactive
-    provider = cfg.model_provider or os.getenv("MODEL_PROVIDER", "").strip()
-    if not provider and interactive:
-        provider = _prompt_provider()
+    env_provider = os.getenv("MODEL_PROVIDER", "").strip()
+    provider = cfg.model_provider or env_provider
+
+    # Interactive runs should ask which provider/model to use unless explicit CLI flags were provided.
+    if interactive and not model_flags_supplied:
+        provider = _prompt_provider(provider or "ollama")
     if not provider:
         provider = "ollama"
     provider = provider.lower()
@@ -268,7 +313,9 @@ def resolve_model(cfg: RunConfig) -> RunConfig:
     # 2. API key: CLI flag → env var → prompt (openai/anthropic only)
     env_key = "OPENAI_API_KEY" if provider == "openai" else "ANTHROPIC_API_KEY"
     api_key = cfg.api_key or os.getenv(env_key, "").strip()
-    if provider != "ollama" and not api_key and interactive:
+    if provider != "ollama" and interactive and not model_flags_supplied:
+        api_key = _prompt_api_key(provider, api_key)
+    elif provider != "ollama" and not api_key and interactive:
         api_key = _prompt_api_key(provider)
     if api_key:
         os.environ[env_key] = api_key
@@ -290,7 +337,9 @@ def resolve_model(cfg: RunConfig) -> RunConfig:
 
     env_model_key = "OPENAI_MODEL" if provider == "openai" else ("ANTHROPIC_MODEL" if provider == "anthropic" else "OLLAMA_MODEL")
     model = cfg.model_name or os.getenv(env_model_key, "").strip()
-    if not model and interactive:
+    if interactive and not model_flags_supplied:
+        model = _prompt_model(provider, installed, model)
+    elif not model and interactive:
         model = _prompt_model(provider, installed)
     if not model:
         model = _provider_defaults().get(provider, {}).get("model", "")
@@ -513,7 +562,7 @@ def parse_run_args(command: str, argv: list[str] | None = None) -> RunConfig:
 def parse_chat_args(argv: list[str] | None = None) -> ChatConfig:
     parser = argparse.ArgumentParser(
         prog="desysflow chat",
-        description="Compatibility alias for one-shot DesysFlow design generation.",
+        description="Compatibility alias for a single DesysFlow design generation.",
     )
     parser.add_argument("--source", default=".", help="Source repository path to analyze.")
     parser.add_argument("--out", default="", help="Storage root for local sessions and outputs.")
@@ -1780,31 +1829,33 @@ def _fmt_size_bytes(size: int) -> str:
 
 def _print_run_header(cfg: RunConfig, target: Path, version: str, previous: Path | None) -> None:
     print("")
-    print("[run] desysflow generation started")
-    print(f"[cmd] requested={cfg.command} effective={cfg.effective_mode}")
-    print(f"[params] project={cfg.project} version={version}")
-    print(f"[params] source={cfg.source}")
-    print(f"[params] output={target}")
-    print(f"[params] language={cfg.language} style={cfg.style} cloud={cfg.cloud} web_search={cfg.web_search}")
-    print(f"[params] role={cfg.role}")
-    print(f"[params] provider={cfg.model_provider or 'n/a'} model={cfg.model_name or 'n/a'}")
-    print(f"[params] prompt={cfg.prompt or cfg.focus or 'auto-from-codebase'}")
-    print(f"[params] parent_version={previous.name if previous else 'none'}")
+    log_line("run", "desysflow generation started")
+    log_line("cmd", f"requested={cfg.command} effective={cfg.effective_mode}")
+    log_line("params", f"project={cfg.project} version={version} parent={previous.name if previous else 'none'}")
+    log_line("params", f"model={cfg.model_provider or 'n/a'}:{cfg.model_name or 'n/a'} role={cfg.role}")
+    log_line("params", f"language={cfg.language} style={cfg.style} cloud={cfg.cloud} web_search={cfg.web_search}")
+    log_line("params", f"request={cfg.prompt or cfg.focus or 'auto-from-codebase'}")
 
 
 def _print_doc_status(docs: dict[str, str]) -> None:
-    print("[status] generated artifact bodies")
+    log_line("status", "generated artifact bodies")
     for name, content in docs.items():
         size = len(content.encode("utf-8"))
         print(f"  - {name:<20} {_fmt_size_bytes(size):>8}  sha={_short_hash(content)}")
 
 
 def _print_written_status(path: Path) -> None:
-    print("[status] wrote files")
+    log_line("status", "wrote files")
     file_names = sorted(item.name for item in path.iterdir() if item.is_file())
     for name in file_names:
         file_path = path / name
         print(f"  - {name:<20} {_fmt_size_bytes(file_path.stat().st_size):>8}")
+
+
+def _cli_progress_config(effective_mode: str) -> tuple[list[dict[str, str]], dict[str, str], str]:
+    if effective_mode == "refine":
+        return FOLLOWUP_PROGRESS_STEPS, FOLLOWUP_NODE_TO_STAGE, "context"
+    return DESIGN_PROGRESS_STEPS, DESIGN_NODE_TO_STAGE, "scope"
 
 
 def build_diff(previous: Path | None, current_docs: dict[str, str]) -> str:
@@ -1844,12 +1895,12 @@ def run(cfg: RunConfig) -> int:
     # Pre-scan source for potential secret leaks and warn the user
     secret_warnings = check_source_for_secrets(cfg.source)
     if secret_warnings:
-        print("[SECURITY WARNING] Possible secrets detected in source:")
+        log_line("warn", "Possible secrets detected in source:")
         for w in secret_warnings[:5]:
             print(w)
         if len(secret_warnings) > 5:
             print(f"  ... and {len(secret_warnings) - 5} more files")
-        print("Review generated docs before sharing.")
+        log_line("hint", "Review generated docs before sharing.")
         if os.isatty(0):
             confirm = input("Continue? [y/N]: ").strip().lower()
             if confirm not in ("y", "yes"):
@@ -1859,7 +1910,7 @@ def run(cfg: RunConfig) -> int:
     version, target, previous = choose_version(project_root)
     _print_run_header(cfg, target, version, previous)
     if cfg.effective_mode == "refine" and previous is None:
-        print("No baseline found for refine mode; running as fresh /design generation.")
+        log_line("warn", "No baseline found for refine mode; running as fresh /design generation.")
         cfg = RunConfig(
             command=cfg.command,
             source=cfg.source,
@@ -1881,34 +1932,49 @@ def run(cfg: RunConfig) -> int:
             base_url=cfg.base_url,
         )
 
-    print("[stage] analysis context")
+    steps, node_to_stage, initial_stage = _cli_progress_config(cfg.effective_mode)
+    step_labels = {item["key"]: item["label"] for item in steps}
+    current_stage = initial_stage
+
+    log_line("stage", step_labels[initial_stage])
     ctx = build_analysis_context(cfg)
-    print(
-        f"[status] modules={len(ctx.module_map)} key_paths={len(ctx.key_paths)} "
+    log_line(
+        "status",
+        f"modules={len(ctx.module_map)} key_paths={len(ctx.key_paths)} "
         f"references={len(ctx.references)} web_search_effective={'on' if ctx.web_enabled else 'off'}"
     )
     if ctx.web_enabled and not ctx.references:
-        print("[warn] Web search was enabled but returned 0 references (check network access or DDGS setup).")
-    print("[stage] run architecture workflow")
-    print("[status] waiting for LLM response; local Ollama models can take a few minutes on large prompts")
+        log_line("warn", "Web search was enabled but returned 0 references (check network access or DDGS setup).")
+    log_line("status", "waiting for LLM response; local Ollama models can take a few minutes on large prompts")
     user_request = build_user_request(cfg, ctx)
-    workflow_result: dict[str, Any] | None = None
+
+    def _on_workflow_update(node_key: str, _payload: dict[str, Any], _state: dict[str, Any]) -> None:
+        nonlocal current_stage
+        stage_key = node_to_stage.get(node_key)
+        if stage_key and stage_key != current_stage:
+            current_stage = stage_key
+            log_line("stage", step_labels[stage_key])
+
     try:
-        workflow_result = run_workflow(
+        workflow_result = run_workflow_with_updates(
             user_request,
             diagram_style=cfg.style,
             preferred_language=cfg.language,
+            on_update=_on_workflow_update,
         )
         hld_components = workflow_result.get("hld_report", {}).get("components", [])
         lld_apis = workflow_result.get("lld_report", {}).get("api_endpoints", [])
-        print(
-            f"[status] workflow generated components={len(hld_components) if isinstance(hld_components, list) else 0} "
+        log_line(
+            "status",
+            f"workflow generated components={len(hld_components) if isinstance(hld_components, list) else 0} "
             f"api_endpoints={len(lld_apis) if isinstance(lld_apis, list) else 0}"
         )
     except Exception as exc:
-        print(f"[warn] prompt-driven workflow failed, using template fallback: {exc}")
+        raise SystemExit(f"prompt-driven workflow failed: {exc}") from exc
 
-    print("[stage] render docs")
+    log_line("done", "generation source=llm_workflow")
+
+    log_line("status", "assembling final artifacts")
     docs = render_docs(cfg, version, ctx, workflow_result=workflow_result, user_request=user_request)
     _print_doc_status(docs)
     metadata = {
@@ -1930,16 +1996,18 @@ def run(cfg: RunConfig) -> int:
         "parent_version": previous.name if previous else None,
         "subagents": ["extractor", "stack-profiler", "architect", "diagrammer", "reporter", "reviewer"],
         "review_loop_limit": REVIEW_LOOP_LIMIT,
+        "generation_source": "llm_workflow",
+        "llm_workflow_used": True,
     }
 
-    print("[stage] write artifacts")
+    log_line("stage", "write artifacts")
     write_artifacts(target, docs, metadata)
     (target / "TREE.md").write_text(folder_tree(target), encoding="utf-8")
     (target / "DIFF.md").write_text(build_diff(previous, docs), encoding="utf-8")
     (project_root / "latest").write_text(version + "\n", encoding="utf-8")
     _print_written_status(target)
 
-    print("[stage] update local session db")
+    log_line("stage", "update local session db")
     db_path = cli_db_path(cfg.output_root)
     init_session_db(db_path)
     run_id = record_run(db_path, cfg, target)
@@ -1953,9 +2021,9 @@ def run(cfg: RunConfig) -> int:
         record_event(db_path, run_id, "focus", cfg.focus)
     record_event(db_path, run_id, "web_search", f"enabled={ctx.web_enabled}, refs={len(ctx.references)}")
 
-    print(f"[done] generated design artifacts at: {target}")
-    print(f"[done] session db: {db_path}")
-    print("[hint] key files: HLD.md, LLD.md, TECHNICAL_REPORT.md, NON_TECHNICAL_DOC.md, diagram.mmd, DIFF.md")
+    log_line("done", f"generated design artifacts at: {target}")
+    log_line("done", f"session db: {db_path}")
+    log_line("hint", "key files: HLD.md, LLD.md, TECHNICAL_REPORT.md, NON_TECHNICAL_DOC.md, diagram.mmd, DIFF.md")
     return 0
 
 
@@ -1968,7 +2036,7 @@ def require_llm_for_terminal() -> None:
     message = status.get("message", "Model is not available.")
     print(f"LLM unavailable for provider={provider} model={model}")
     print(message)
-    if not Path(".env").exists():
+    if not Path(".env.example").exists():
         print("Run ./scripts/bootstrap.sh for first-time model setup.")
     if provider == "ollama" and status.get("status") == "missing_model":
         print(f"Install it first with: ollama pull {model}")
@@ -2027,10 +2095,10 @@ def make_run_config_from_chat(chat_cfg: ChatConfig, focus: str, role: str) -> Ru
 def run_chat(chat_cfg: ChatConfig) -> int:
     """Compatibility path for the old chat command.
 
-    Keep the command as a one-shot design run so
+    Keep the command as a single design run so
     existing scripts do not drop users into an interactive loop.
     """
-    print("The chat command is now a compatibility alias. Running one design generation.")
+    print("The chat command is now a compatibility alias. Running a single design generation.")
     return run(
         collect_run_args(
             "design",

@@ -11,7 +11,7 @@ from typing import Any, Dict
 
 from schemas.models import AgentState
 from services.llm import get_llm
-from utils.parser import extract_json_block
+from utils.parser import extract_json_block, normalize_llm_text
 
 logger = logging.getLogger(__name__)
 
@@ -105,7 +105,9 @@ def cloud_infra_agent(state: AgentState) -> Dict[str, Any]:
     for attempt in range(1, max_attempts + 1):
         try:
             response = llm.invoke(messages)
-            raw = response.content if hasattr(response, "content") else str(response)
+            raw = normalize_llm_text(
+                response.content if hasattr(response, "content") else response
+            )
             logger.debug("Cloud infra response (attempt %d): %s", attempt, raw[:500])
 
             json_str = extract_json_block(raw)
