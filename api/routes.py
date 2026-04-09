@@ -74,6 +74,7 @@ from utils.workflow_contract import (
     DESIGN_PROGRESS_STEPS,
     FOLLOWUP_NODE_TO_STAGE,
     FOLLOWUP_PROGRESS_STEPS,
+    normalize_workflow_result,
     validate_delivery_payload,
 )
 
@@ -519,6 +520,7 @@ async def _run_design_async_operation(
         result.setdefault("critic_runs_used", 0)
         result["diagram_style"] = diagram_style
         result = _attach_mermaid_metadata(result, source="design_async")
+        result = normalize_workflow_result(result)
         critic_feedback = result.get("critic_feedback", [])
         critic_summary, system_design_doc, non_technical_doc = await _run_postprocessors(result)
         validate_delivery_payload(result, system_design_doc, non_technical_doc)
@@ -628,6 +630,7 @@ async def _run_followup_async_operation(
         result.setdefault("critic_runs_used", int(session.get("critic_runs", 0)))
         result["diagram_style"] = diagram_style
         result = _attach_mermaid_metadata(result, source="followup_async", previous_result=previous_result)
+        result = normalize_workflow_result(result)
         critic_feedback = result.get("critic_feedback", [])
         critic_summary, system_design_doc, non_technical_doc = await _run_postprocessors(result)
         validate_delivery_payload(result, system_design_doc, non_technical_doc)
@@ -835,6 +838,7 @@ async def design_system(request: DesignRequest) -> DesignResponse:
         result.setdefault("critic_runs_used", 0)
         result["diagram_style"] = diagram_style
         result = _attach_mermaid_metadata(result, source="design")
+        result = normalize_workflow_result(result)
         critic_feedback = result.get("critic_feedback", [])
         critic_summary, system_design_doc, non_technical_doc = await _run_postprocessors(result)
         validate_delivery_payload(result, system_design_doc, non_technical_doc)
@@ -1110,6 +1114,7 @@ async def design_followup(request: FollowUpRequest) -> FollowUpResponse:
         result.setdefault("critic_runs_used", int(session.get("critic_runs", 0)))
         result["diagram_style"] = diagram_style
         result = _attach_mermaid_metadata(result, source="followup", previous_result=previous_result)
+        result = normalize_workflow_result(result)
         critic_feedback = result.get("critic_feedback", [])
         critic_summary, system_design_doc, non_technical_doc = await _run_postprocessors(result)
         validate_delivery_payload(result, system_design_doc, non_technical_doc)

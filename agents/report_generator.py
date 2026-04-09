@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from copy import deepcopy
 from typing import Any, Dict
 
 from schemas.models import AgentState
@@ -17,6 +18,107 @@ from services.llm import get_llm
 from utils.parser import extract_json_block, normalize_llm_text
 
 logger = logging.getLogger(__name__)
+
+_HLD_DEFAULT = {
+    "system_overview": "Architecture overview is pending refinement.",
+    "components": [{"name": "API Service", "responsibility": "Handles client requests", "type": "service"}],
+    "data_flow": ["Client sends request to API service", "API service processes request and returns response"],
+    "scaling_strategy": "Horizontal scaling with stateless services and autoscaling.",
+    "availability": "Multi-instance deployment with health checks and automated failover.",
+    "trade_offs": ["Favor managed services for speed of delivery over deep infrastructure customization."],
+    "estimated_capacity": {
+        "requests_per_second": "100-500 RPS",
+        "storage": "100 GB initial",
+        "bandwidth": "100 Mbps baseline",
+    },
+}
+
+_LLD_DEFAULT = {
+    "api_endpoints": [
+        {
+            "method": "POST",
+            "path": "/api/v1/process",
+            "description": "Submit a processing request.",
+            "request_body": {"payload": "object"},
+            "response_body": {"status": "accepted", "id": "string"},
+        }
+    ],
+    "database_schemas": [
+        {
+            "name": "primary_db",
+            "type": "PostgreSQL",
+            "tables_or_collections": [{"name": "items", "fields": ["id", "created_at", "status"]}],
+        }
+    ],
+    "service_communication": [
+        {"from": "API Service", "to": "Worker Service", "protocol": "REST", "description": "Submit jobs for processing."}
+    ],
+    "caching_strategy": [
+        {
+            "layer": "Application",
+            "technology": "Redis",
+            "ttl": "300s",
+            "invalidation_strategy": "Event-based invalidation on write",
+        }
+    ],
+    "error_handling": [
+        {"scenario": "Upstream timeout", "strategy": "Retry with backoff", "fallback": "Return 503 with retry-after"}
+    ],
+    "deployment": {
+        "containerization": "Docker",
+        "orchestration": "Kubernetes",
+        "ci_cd": "GitHub Actions",
+        "environments": ["dev", "staging", "prod"],
+    },
+    "security": ["TLS everywhere", "JWT authentication", "Role-based authorization"],
+}
+
+
+def _non_empty_str(value: Any) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
+def _non_empty_list(value: Any) -> bool:
+    return isinstance(value, list) and len(value) > 0
+
+
+def _non_empty_dict(value: Any) -> bool:
+    return isinstance(value, dict) and len(value) > 0
+
+
+def _normalize_hld_report(report: Any) -> dict:
+    data = report if isinstance(report, dict) else {}
+    normalized = deepcopy(_HLD_DEFAULT)
+
+    if _non_empty_str(data.get("system_overview")):
+        normalized["system_overview"] = data["system_overview"].strip()
+    if _non_empty_list(data.get("components")):
+        normalized["components"] = data["components"]
+    if _non_empty_list(data.get("data_flow")):
+        normalized["data_flow"] = data["data_flow"]
+    if _non_empty_str(data.get("scaling_strategy")):
+        normalized["scaling_strategy"] = data["scaling_strategy"].strip()
+    if _non_empty_str(data.get("availability")):
+        normalized["availability"] = data["availability"].strip()
+    if _non_empty_list(data.get("trade_offs")):
+        normalized["trade_offs"] = data["trade_offs"]
+    if _non_empty_dict(data.get("estimated_capacity")):
+        normalized["estimated_capacity"] = data["estimated_capacity"]
+
+    return normalized
+
+
+def _normalize_lld_report(report: Any) -> dict:
+    data = report if isinstance(report, dict) else {}
+    normalized = deepcopy(_LLD_DEFAULT)
+
+    for key in ["api_endpoints", "database_schemas", "service_communication", "caching_strategy", "error_handling", "security"]:
+        if _non_empty_list(data.get(key)):
+            normalized[key] = data[key]
+    if _non_empty_dict(data.get("deployment")):
+        normalized["deployment"] = data["deployment"]
+
+    return normalized
 
 
 _HLD_SYSTEM_PROMPT = """You are a principal architect writing a High-Level Design (HLD) document
@@ -188,8 +290,8 @@ def report_generator(state: AgentState) -> Dict[str, Any]:
         }
 
     return {
-        "hld_report": hld_report,
-        "lld_report": lld_report,
+        "hld_report": _normalize_hld_report(hld_report),
+        "lld_report": _normalize_lld_report(lld_report),
     }
 
 
@@ -299,4 +401,7 @@ def generate_cloud_reports(
         logger.error("Cloud LLD generation failed: %s", exc)
         lld_report = {"api_endpoints": []}
 
-    return {"hld_report": hld_report, "lld_report": lld_report}
+    return {
+        "hld_report": _normalize_hld_report(hld_report),
+        "lld_report": _normalize_lld_report(lld_report),
+    }

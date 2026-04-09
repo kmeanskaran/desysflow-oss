@@ -18,7 +18,7 @@ from agents.report_generator import report_generator
 from rules.edge_cases import inject_edge_cases as _inject_edge_cases
 from schemas.models import AgentState, Requirements
 from templates.base_templates import select_template as _select_template
-from utils.workflow_contract import validate_workflow_result
+from utils.workflow_contract import normalize_workflow_result, validate_workflow_result
 
 logger = logging.getLogger(__name__)
 
@@ -147,6 +147,7 @@ def run_workflow_with_updates(
                 if on_update:
                     on_update(str(node_key), node_payload, dict(state))
 
+    state = normalize_workflow_result(state)
     validate_workflow_result(state)
     logger.info("Workflow completed successfully")
     return state

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+from copy import deepcopy
 from typing import Any, Dict
 
 from schemas.models import AgentState
@@ -14,6 +15,67 @@ from services.llm import get_llm
 from utils.parser import extract_json_block, normalize_llm_text
 
 logger = logging.getLogger(__name__)
+
+_TECH_STACK_KEYS = [
+    "languages",
+    "frameworks",
+    "databases",
+    "message_queues",
+    "caching",
+    "monitoring",
+    "ci_cd",
+    "containerization",
+]
+
+_PROVIDERS = ["aws", "gcp", "azure", "digitalocean", "on_prem", "local"]
+_CLOUD_KEYS = ["compute", "database", "cache", "queue", "storage", "cdn", "monitoring", "networking"]
+
+_CLOUD_DEFAULTS = {
+    "aws": {"compute": ["ECS"], "database": ["RDS"], "cache": ["ElastiCache"], "queue": ["SQS"], "storage": ["S3"], "cdn": ["CloudFront"], "monitoring": ["CloudWatch"], "networking": ["ALB"]},
+    "gcp": {"compute": ["Cloud Run"], "database": ["Cloud SQL"], "cache": ["Memorystore"], "queue": ["Pub/Sub"], "storage": ["GCS"], "cdn": ["Cloud CDN"], "monitoring": ["Cloud Monitoring"], "networking": ["Cloud Load Balancing"]},
+    "azure": {"compute": ["AKS"], "database": ["Azure SQL"], "cache": ["Azure Cache for Redis"], "queue": ["Service Bus"], "storage": ["Blob Storage"], "cdn": ["Azure CDN"], "monitoring": ["Azure Monitor"], "networking": ["Application Gateway"]},
+    "digitalocean": {"compute": ["App Platform"], "database": ["Managed PostgreSQL"], "cache": ["Managed Redis"], "queue": ["Kafka (managed/third-party)"], "storage": ["Spaces"], "cdn": ["Spaces CDN"], "monitoring": ["DigitalOcean Monitoring"], "networking": ["Load Balancer"]},
+    "on_prem": {"compute": ["Kubernetes"], "database": ["Self-hosted PostgreSQL"], "cache": ["Redis"], "queue": ["RabbitMQ"], "storage": ["MinIO"], "cdn": ["Nginx"], "monitoring": ["Prometheus + Grafana"], "networking": ["HAProxy"]},
+    "local": {"compute": ["Docker Compose"], "database": ["PostgreSQL / SQLite"], "cache": ["Redis"], "queue": ["RabbitMQ"], "storage": ["Local filesystem / MinIO"], "cdn": ["Nginx"], "monitoring": ["Prometheus + Grafana"], "networking": ["Docker Network"]},
+}
+
+
+def _non_empty_list(value: Any) -> bool:
+    return isinstance(value, list) and len(value) > 0
+
+
+def _normalize_tech_stack(tech_stack: Any, preferred_language: str) -> dict:
+    data = tech_stack if isinstance(tech_stack, dict) else {}
+    normalized = {
+        "languages": [preferred_language],
+        "frameworks": ["FastAPI", "React"],
+        "databases": ["PostgreSQL"],
+        "message_queues": ["RabbitMQ"],
+        "caching": ["Redis"],
+        "monitoring": ["Prometheus", "Grafana"],
+        "ci_cd": ["GitHub Actions"],
+        "containerization": ["Docker"],
+    }
+    for key in _TECH_STACK_KEYS:
+        if _non_empty_list(data.get(key)):
+            normalized[key] = data[key]
+    return normalized
+
+
+def _normalize_cloud_infrastructure(cloud_infrastructure: Any) -> dict:
+    data = cloud_infrastructure if isinstance(cloud_infrastructure, dict) else {}
+    normalized: dict[str, dict[str, list[str]]] = {}
+
+    for provider in _PROVIDERS:
+        provider_data = data.get(provider, {})
+        provider_defaults = _CLOUD_DEFAULTS[provider]
+        normalized_provider = deepcopy(provider_defaults)
+        if isinstance(provider_data, dict):
+            for key in _CLOUD_KEYS:
+                if _non_empty_list(provider_data.get(key)):
+                    normalized_provider[key] = provider_data[key]
+        normalized[provider] = normalized_provider
+    return normalized
 
 
 _SYSTEM_PROMPT = """You are a cloud infrastructure architect with deep expertise in
@@ -113,8 +175,8 @@ def cloud_infra_agent(state: AgentState) -> Dict[str, Any]:
             json_str = extract_json_block(raw)
             data = json.loads(json_str)
 
-            tech_stack = data.get("tech_stack", {})
-            cloud_infra = data.get("cloud_infrastructure", {})
+            tech_stack = _normalize_tech_stack(data.get("tech_stack", {}), preferred_language)
+            cloud_infra = _normalize_cloud_infrastructure(data.get("cloud_infrastructure", {}))
 
             logger.info(
                 "Cloud infra generated: %d providers, tech stack with %d categories",
@@ -140,23 +202,17 @@ def cloud_infra_agent(state: AgentState) -> Dict[str, Any]:
 
     # Fallback
     logger.error("Cloud infra generation failed after %d attempts: %s", max_attempts, last_error)
+    tech_stack_fallback = {
+        "languages": [preferred_language],
+        "frameworks": ["FastAPI", "React"],
+        "databases": revised.get("databases", []),
+        "message_queues": revised.get("message_queues", []),
+        "caching": revised.get("caching_layer", []),
+        "monitoring": ["Prometheus", "Grafana"],
+        "ci_cd": ["GitHub Actions"],
+        "containerization": ["Docker"],
+    }
     return {
-        "tech_stack": {
-            "languages": [preferred_language],
-            "frameworks": ["FastAPI", "React"],
-            "databases": revised.get("databases", []),
-            "message_queues": revised.get("message_queues", []),
-            "caching": revised.get("caching_layer", []),
-            "monitoring": ["Prometheus", "Grafana"],
-            "ci_cd": ["GitHub Actions"],
-            "containerization": ["Docker"],
-        },
-        "cloud_infrastructure": {
-            "aws": {"compute": ["ECS"], "database": ["RDS"], "cache": ["ElastiCache"], "queue": ["SQS"], "storage": ["S3"], "cdn": ["CloudFront"], "monitoring": ["CloudWatch"], "networking": ["ALB"]},
-            "gcp": {"compute": ["Cloud Run"], "database": ["Cloud SQL"], "cache": ["Memorystore"], "queue": ["Pub/Sub"], "storage": ["GCS"], "cdn": ["Cloud CDN"], "monitoring": ["Cloud Monitoring"], "networking": ["Cloud Load Balancing"]},
-            "azure": {"compute": ["AKS"], "database": ["Azure SQL"], "cache": ["Azure Cache"], "queue": ["Service Bus"], "storage": ["Blob Storage"], "cdn": ["Azure CDN"], "monitoring": ["Azure Monitor"], "networking": ["Application Gateway"]},
-            "digitalocean": {"compute": ["App Platform"], "database": ["Managed DB"], "cache": ["Managed Redis"], "queue": ["N/A"], "storage": ["Spaces"], "cdn": ["Spaces CDN"], "monitoring": ["Monitoring"], "networking": ["Load Balancer"]},
-            "on_prem": {"compute": ["Kubernetes"], "database": ["Self-hosted"], "cache": ["Redis"], "queue": ["RabbitMQ"], "storage": ["MinIO"], "cdn": ["Nginx"], "monitoring": ["Prometheus + Grafana"], "networking": ["HAProxy"]},
-            "local": {"compute": ["Docker Compose / Podman"], "database": ["PostgreSQL / SQLite"], "cache": ["Redis"], "queue": ["RabbitMQ / Kafka"], "storage": ["Local filesystem / MinIO"], "cdn": ["Nginx"], "monitoring": ["Prometheus + Grafana"], "networking": ["Docker Network"]},
-        },
+        "tech_stack": _normalize_tech_stack(tech_stack_fallback, preferred_language),
+        "cloud_infrastructure": _normalize_cloud_infrastructure(_CLOUD_DEFAULTS),
     }

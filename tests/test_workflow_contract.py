@@ -1,6 +1,10 @@
 import pytest
 
-from utils.workflow_contract import validate_delivery_payload, validate_workflow_result
+from utils.workflow_contract import (
+    normalize_workflow_result,
+    validate_delivery_payload,
+    validate_workflow_result,
+)
 
 
 def _valid_result():
@@ -84,3 +88,17 @@ def test_validate_workflow_result_rejects_missing_hld_content() -> None:
 def test_validate_delivery_payload_rejects_empty_postprocessed_docs() -> None:
     with pytest.raises(ValueError, match="system_design_doc"):
         validate_delivery_payload(_valid_result(), {}, {"summary": "brief"})
+
+
+def test_normalize_workflow_result_backfills_required_hld_fields() -> None:
+    result = _valid_result()
+    result["hld_report"] = {"system_overview": "Custom overview"}
+    normalized = normalize_workflow_result(result)
+
+    assert normalized["hld_report"]["system_overview"] == "Custom overview"
+    assert normalized["hld_report"]["scaling_strategy"]
+    assert normalized["hld_report"]["availability"]
+    assert normalized["hld_report"]["trade_offs"]
+    assert normalized["hld_report"]["estimated_capacity"]
+
+    validate_workflow_result(normalized)

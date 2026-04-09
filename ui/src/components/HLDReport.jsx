@@ -1,5 +1,16 @@
 export default function HLDReport({ data }) {
-    if (!data || Object.keys(data).length === 0) {
+    const safeData = data && typeof data === 'object' && !Array.isArray(data) ? data : {}
+    const components = Array.isArray(safeData.components) ? safeData.components : []
+    const dataFlow = Array.isArray(safeData.data_flow) ? safeData.data_flow : []
+    const tradeOffs = Array.isArray(safeData.trade_offs) ? safeData.trade_offs : []
+    const estimatedCapacity =
+        safeData.estimated_capacity &&
+        typeof safeData.estimated_capacity === 'object' &&
+        !Array.isArray(safeData.estimated_capacity)
+            ? safeData.estimated_capacity
+            : {}
+
+    if (Object.keys(safeData).length === 0) {
         return (
             <div className="report">
                 <p className="report__empty">No HLD report available.</p>
@@ -18,15 +29,15 @@ export default function HLDReport({ data }) {
             </div>
 
             {/* System Overview */}
-            {data.system_overview && (
+            {safeData.system_overview && (
                 <div className="report__block">
                     <h4 className="report__block-title">System Overview</h4>
-                    <p className="report__block-text">{data.system_overview}</p>
+                    <p className="report__block-text">{safeData.system_overview}</p>
                 </div>
             )}
 
             {/* Components */}
-            {data.components && data.components.length > 0 && (
+            {components.length > 0 && (
                 <div className="report__block">
                     <h4 className="report__block-title">Components</h4>
                     <div className="report__table-wrap">
@@ -39,11 +50,11 @@ export default function HLDReport({ data }) {
                                 </tr>
                             </thead>
                             <tbody>
-                                {data.components.map((c, i) => (
+                                {components.map((c, i) => (
                                     <tr key={i}>
-                                        <td className="report__table-name">{c.name}</td>
-                                        <td><span className="tag tag--small">{c.type}</span></td>
-                                        <td>{c.responsibility}</td>
+                                        <td className="report__table-name">{c?.name || '-'}</td>
+                                        <td><span className="tag tag--small">{c?.type || '-'}</span></td>
+                                        <td>{c?.responsibility || '-'}</td>
                                     </tr>
                                 ))}
                             </tbody>
@@ -53,11 +64,11 @@ export default function HLDReport({ data }) {
             )}
 
             {/* Data Flow */}
-            {data.data_flow && data.data_flow.length > 0 && (
+            {dataFlow.length > 0 && (
                 <div className="report__block">
                     <h4 className="report__block-title">Data Flow</h4>
                     <ol className="report__ordered-list">
-                        {data.data_flow.map((step, i) => (
+                        {dataFlow.map((step, i) => (
                             <li key={i}>{step}</li>
                         ))}
                     </ol>
@@ -65,27 +76,27 @@ export default function HLDReport({ data }) {
             )}
 
             {/* Scaling Strategy */}
-            {data.scaling_strategy && (
+            {safeData.scaling_strategy && (
                 <div className="report__block">
                     <h4 className="report__block-title">Scaling Strategy</h4>
-                    <p className="report__block-text">{data.scaling_strategy}</p>
+                    <p className="report__block-text">{safeData.scaling_strategy}</p>
                 </div>
             )}
 
             {/* Availability */}
-            {data.availability && (
+            {safeData.availability && (
                 <div className="report__block">
                     <h4 className="report__block-title">Availability and DR</h4>
-                    <p className="report__block-text">{data.availability}</p>
+                    <p className="report__block-text">{safeData.availability}</p>
                 </div>
             )}
 
             {/* Trade-offs */}
-            {data.trade_offs && data.trade_offs.length > 0 && (
+            {tradeOffs.length > 0 && (
                 <div className="report__block">
                     <h4 className="report__block-title">Trade-offs</h4>
                     <ul className="report__list">
-                        {data.trade_offs.map((t, i) => (
+                        {tradeOffs.map((t, i) => (
                             <li key={i}>{t}</li>
                         ))}
                     </ul>
@@ -93,11 +104,11 @@ export default function HLDReport({ data }) {
             )}
 
             {/* Estimated Capacity */}
-            {data.estimated_capacity && Object.keys(data.estimated_capacity).length > 0 && (
+            {Object.keys(estimatedCapacity).length > 0 && (
                 <div className="report__block">
                     <h4 className="report__block-title">Estimated Capacity</h4>
                     <div className="report__metrics">
-                        {Object.entries(data.estimated_capacity).map(([key, val]) => (
+                        {Object.entries(estimatedCapacity).map(([key, val]) => (
                             <div key={key} className="metric-card">
                                 <span className="metric-card__label">
                                     {key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}

@@ -35,7 +35,8 @@ clouds:
   - aws
   - gcp
   - azure
-  - hybrid
+  - digitalocean
+  - on-prem
 
 # Web search behaviour
 search_modes:
