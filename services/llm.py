@@ -418,3 +418,35 @@ def _status(cfg: LLMConfig, status: str, message: str) -> dict[str, str]:
         "base_url": cfg.base_url,
         "message": message,
     }
+
+
+_LLM_LIMIT_ERROR_PATTERNS = (
+    "rate limit",
+    "ratelimit",
+    "too many requests",
+    "status code: 429",
+    "http 429",
+    "insufficient_quota",
+    "quota exceeded",
+    "maximum context length",
+    "context length exceeded",
+    "context window",
+    "token limit",
+    "too many tokens",
+    "max tokens",
+    "request too large",
+    "prompt is too long",
+    "input is too long",
+    "overloaded",
+)
+
+
+def is_llm_limit_error(exc: BaseException) -> bool:
+    """Return True when an exception matches common LLM limit failure patterns."""
+    parts: list[str] = []
+    current: BaseException | None = exc
+    while current:
+        parts.append(str(current))
+        current = current.__cause__ or current.__context__
+    message = " | ".join(parts).lower()
+    return any(pattern in message for pattern in _LLM_LIMIT_ERROR_PATTERNS)
