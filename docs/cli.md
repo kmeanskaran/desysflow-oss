@@ -58,6 +58,7 @@ When flags are omitted in an interactive terminal, CLI asks for:
 - web-search mode (`auto`, `on`, `off`)
 - role/persona
 - input mode (`vibe-now` or `ask`)
+- optional prompt text for both modes (`vibe-now` + prompt is supported)
 
 Choices use plain typed/numeric selection.
 

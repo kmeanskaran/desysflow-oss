@@ -16,7 +16,7 @@ from typing import Any
 import yaml
 
 from services.storage_paths import get_storage_root
-from services.llm import check_llm_status, get_llm_config, list_ollama_models
+from services.llm import check_llm_status, get_llm_config, is_llm_limit_error, list_ollama_models
 from graph.workflow import run_workflow_with_updates
 from utils.design_doc import build_system_design_doc
 from utils.non_technical_doc import build_non_technical_doc
@@ -400,9 +400,13 @@ def finalize_options(cfg: RunConfig) -> RunConfig:
         input_mode = _ask_choice("Input mode", ["vibe-now", "ask"], "vibe-now")
         if input_mode == "ask":
             print("  Prompt (optional):")
-            entered_prompt = input("  > ").strip()
-            if entered_prompt:
-                prompt = entered_prompt
+            print("  Add product constraints/users/scale to guide generation.")
+        else:
+            print("  Prompt (optional):")
+            print("  Add extra guidance; CLI still reads current codebase automatically.")
+        entered_prompt = input("  > ").strip()
+        if entered_prompt:
+            prompt = entered_prompt
 
     effective_mode = resolve_effective_mode(cfg.command, mode, has_existing_design, cfg.focus)
 
@@ -1970,6 +1974,16 @@ def run(cfg: RunConfig) -> int:
             f"api_endpoints={len(lld_apis) if isinstance(lld_apis, list) else 0}"
         )
     except Exception as exc:
+        if is_llm_limit_error(exc):
+            llm_cfg = get_llm_config()
+            log_line("warn", "LLM request hit provider limits (rate/context/token)")
+            print(f"  Provider   : {llm_cfg.provider}")
+            print(f"  Model      : {llm_cfg.model}")
+            print("  Next steps :")
+            print("    - Retry with a shorter prompt/focus.")
+            print("    - Use --style minimal to reduce output size.")
+            print("    - Set --web-search off to shrink prompt context.")
+            raise SystemExit(1) from exc
         raise SystemExit(f"prompt-driven workflow failed: {exc}") from exc
 
     log_line("done", "generation source=llm_workflow")
@@ -2203,8 +2217,11 @@ def run_wizard() -> int:
     if prompt_mode == "ask":
         print("  Describe product constraints/users/scale (optional).")
         print("  Leave blank to generate architecture from current codebase context.")
-        print("")
-        prompt_text = input("  > ").strip()
+    else:
+        print("  Optional prompt to augment codebase-driven generation.")
+        print("  Leave blank to use only inferred codebase context.")
+    print("")
+    prompt_text = input("  > ").strip()
 
     # ── Summary ───────────────────────────────────────────────────
     print_sep("Ready")
