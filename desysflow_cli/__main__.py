@@ -379,6 +379,7 @@ def finalize_options(cfg: RunConfig) -> RunConfig:
         child.is_dir() and child.name.startswith("v")
         for child in project_root.iterdir()
     ) if project_root.exists() else False
+    source_has_files = has_meaningful_source_files(cfg.source)
 
     defaults = cfg_defaults()
     language = cfg.language or os.getenv("DESYSFLOW_LANGUAGE", "").strip() or defaults.get("language", "python")
@@ -397,18 +398,35 @@ def finalize_options(cfg: RunConfig) -> RunConfig:
         role     = _ask_choice("Role",                  cfg_list("roles", ["DevOps", "Principal Architect", "MLOps / AIOps"]), role)
         if cfg.command == "/design" and has_existing_design:
             mode = _ask_choice("Design routing",       cfg_list("design_modes", ["smart", "fresh", "refine"]),            mode)
-        input_mode = _ask_choice("Input mode", ["vibe-now", "ask"], "vibe-now")
-        if input_mode == "ask":
-            print("  Prompt (optional):")
-            print("  Add product constraints/users/scale to guide generation.")
+        if not source_has_files:
+            print("  Source appears empty. Prompt is required to start from scratch.")
+            print("  Prompt (required):")
+            print("  Describe the product/feature you want to design from scratch.")
+            while True:
+                entered_prompt = input("  > ").strip()
+                if entered_prompt:
+                    prompt = entered_prompt
+                    break
+                print("  Prompt cannot be empty for an empty source folder.")
         else:
-            print("  Prompt (optional):")
-            print("  Add extra guidance; CLI still reads current codebase automatically.")
-        entered_prompt = input("  > ").strip()
-        if entered_prompt:
-            prompt = entered_prompt
+            input_mode = _ask_choice("Input mode", ["vibe-now", "ask"], "vibe-now")
+            if input_mode == "ask":
+                print("  Prompt (optional):")
+                if has_existing_design:
+                    print("  Describe the feature/change request for this codebase.")
+                else:
+                    print("  Add product constraints/users/scale to guide generation.")
+            else:
+                print("  Prompt (optional):")
+                print("  Add extra guidance; CLI still reads current codebase automatically.")
+            entered_prompt = input("  > ").strip()
+            if entered_prompt:
+                prompt = entered_prompt
 
-    effective_mode = resolve_effective_mode(cfg.command, mode, has_existing_design, cfg.focus)
+    focus = cfg.focus.strip() or prompt
+    if not source_has_files and not prompt.strip():
+        raise SystemExit("Source folder is empty. Provide a prompt with --prompt to design from scratch.")
+    effective_mode = resolve_effective_mode(cfg.command, mode, has_existing_design, focus)
 
     return RunConfig(
         command=cfg.command,
@@ -421,7 +439,7 @@ def finalize_options(cfg: RunConfig) -> RunConfig:
         web_search=web,
         mode=mode,
         effective_mode=effective_mode,
-        focus=cfg.focus,
+        focus=focus,
         role=role,
         prompt=prompt,
         non_interactive=cfg.non_interactive,
@@ -646,6 +664,19 @@ def check_source_for_secrets(source: Path) -> list[str]:
                     break
             scan_count += 1
     return warnings
+
+
+def has_meaningful_source_files(source: Path) -> bool:
+    """Return True when source has at least one non-hidden, non-skipped file."""
+    for root, dirs, names in os.walk(source):
+        dirs[:] = [d for d in dirs if d not in SKIP_DIRS and not d.startswith(".")]
+        for name in names:
+            if name.startswith("."):
+                continue
+            path = Path(root) / name
+            if path.is_file():
+                return True
+    return False
 
 
 def resolve_effective_mode(command: str, mode: str, has_existing_design: bool, focus: str) -> str:
@@ -1895,6 +1926,10 @@ def run(cfg: RunConfig) -> int:
     require_llm_for_terminal()
     if not cfg.source.exists() or not cfg.source.is_dir():
         raise SystemExit(f"Source path is invalid: {cfg.source}")
+    if not has_meaningful_source_files(cfg.source) and not (cfg.prompt.strip() or cfg.focus.strip()):
+        raise SystemExit(
+            "Source folder appears empty. Provide a design request via --prompt to start from scratch."
+        )
 
     # Pre-scan source for potential secret leaks and warn the user
     secret_warnings = check_source_for_secrets(cfg.source)
@@ -2212,16 +2247,38 @@ def run_wizard() -> int:
 
     # ── Prompt / focus ───────────────────────────────────────────
     print_sep("Your design request")
-    prompt_mode = _ask_choice("Input mode", ["vibe-now", "ask"], "vibe-now")
+    source_path = Path.cwd()
+    source_has_files = has_meaningful_source_files(source_path)
+    project = default_project_name(source_path)
+    output_root = default_output_root()
+    project_root = output_root / project
+    has_existing_design = any(
+        child.is_dir() and child.name.startswith("v")
+        for child in project_root.iterdir()
+    ) if project_root.exists() else False
     prompt_text = ""
-    if prompt_mode == "ask":
-        print("  Describe product constraints/users/scale (optional).")
-        print("  Leave blank to generate architecture from current codebase context.")
+    if not source_has_files:
+        print("  Source appears empty. Prompt is required to start from scratch.")
+        while True:
+            print("  Describe the product/feature you want to design.")
+            print("")
+            prompt_text = input("  > ").strip()
+            if prompt_text:
+                break
+            print("  Prompt cannot be empty for an empty source folder.\n")
     else:
-        print("  Optional prompt to augment codebase-driven generation.")
-        print("  Leave blank to use only inferred codebase context.")
-    print("")
-    prompt_text = input("  > ").strip()
+        prompt_mode = _ask_choice("Input mode", ["vibe-now", "ask"], "vibe-now")
+        if prompt_mode == "ask":
+            print("  Prompt (optional):")
+            if has_existing_design:
+                print("  Describe the feature/change request for this codebase.")
+            else:
+                print("  Describe product constraints/users/scale.")
+        else:
+            print("  Optional prompt to augment codebase-driven generation.")
+            print("  Leave blank to use only inferred codebase context.")
+        print("")
+        prompt_text = input("  > ").strip()
 
     # ── Summary ───────────────────────────────────────────────────
     print_sep("Ready")
@@ -2240,17 +2297,10 @@ def run_wizard() -> int:
 
     # ── Build RunConfig & run ────────────────────────────────────
     defaults = cfg_defaults()
-    project = default_project_name(Path.cwd())
-    output_root = default_output_root()
-    project_root = output_root / project
-    has_existing_design = any(
-        child.is_dir() and child.name.startswith("v")
-        for child in project_root.iterdir()
-    ) if project_root.exists() else False
     effective_mode = resolve_effective_mode("/design", mode, has_existing_design, prompt_text)
     cfg = RunConfig(
         command="/design",
-        source=Path.cwd(),
+        source=source_path,
         output_root=output_root,
         project=project,
         language=language,

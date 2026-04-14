@@ -8,6 +8,22 @@
 
 ## 1. Initial Setup
 
+Install globally with the hosted installer:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/kmeanskaran/desysflow-oss/main/scripts/install.sh | bash
+source ~/.bashrc    # or: source ~/.zshrc
+letsvibedesign
+```
+
+Or run from a local clone:
+
+```bash
+LETSVIBEDESIGN_LOCAL_REPO="$PWD" LETSVIBEDESIGN_OFFLINE=1 ./scripts/install.sh
+source ~/.bashrc    # or: source ~/.zshrc
+letsvibedesign
+```
+
 Run the single bootstrap entrypoint:
 
 ```bash

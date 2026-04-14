@@ -23,6 +23,22 @@ It includes:
 - `uv`
 - Node.js + npm
 
+### One-line install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/kmeanskaran/desysflow-oss/main/scripts/install.sh | bash
+source ~/.bashrc    # or: source ~/.zshrc
+letsvibedesign
+```
+
+The installer is intended for macOS, Linux, and WSL2. It clones the repo into `~/.letsvibedesign/desysflow-oss`, bootstraps the local environment, and installs a global `letsvibedesign` launcher into `~/.local/bin`.
+
+For an existing local checkout, skip clone/fetch with:
+
+```bash
+LETSVIBEDESIGN_LOCAL_REPO="$PWD" LETSVIBEDESIGN_OFFLINE=1 ./scripts/install.sh
+```
+
 ### Setup
 
 ```bash
