@@ -42,16 +42,23 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install -e .
+          uv pip install --system -r requirements.txt
+          uv pip install --system -e ".[dev]"
 
       - name: Python compile check
         run: |
           python -m compileall \
             agents api desysflow_cli graph rules schemas services templates utils main.py
+
+      - name: Shell syntax check
+        run: |
+          bash -n letsvibedesign
+          bash -n scripts/*.sh
 
       - name: CLI help checkpoints
         run: |
@@ -60,6 +67,49 @@ jobs:
           python -m desysflow_cli redesign --help
           python -m desysflow_cli chat --help
           python -m desysflow_cli history --help
+
+      - name: Run backend tests
+        env:
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+          PYTHONPATH: .
+        run: pytest -q
+
+  installer-smoke:
+    name: Installer Smoke
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Run local offline installer
+        env:
+          LETSVIBEDESIGN_LOCAL_REPO: ${{ github.workspace }}
+          LETSVIBEDESIGN_OFFLINE: "1"
+          LETSVIBEDESIGN_HOME: ${{ runner.temp }}/letsvibedesign-home
+          LETSVIBEDESIGN_BIN_DIR: ${{ runner.temp }}/letsvibedesign-bin
+        run: |
+          ./scripts/install.sh
+
+      - name: Verify installed launcher
+        run: |
+          export PATH="${{ runner.temp }}/letsvibedesign-bin:$PATH"
+          command -v letsvibedesign
+          letsvibedesign help
 
   frontend-checkpoints:
     name: Frontend Checkpoints
