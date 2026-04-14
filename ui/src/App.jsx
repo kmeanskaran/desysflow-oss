@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import {
+  cancelOperation,
   checkModelConnection,
   deleteConversation,
   getConfig,
@@ -403,6 +404,11 @@ export default function App() {
           setOperationId('')
           setOperation(null)
           listConversations().then((d) => setSessions(d?.conversations || [])).catch(() => {})
+        } else if (status.status === 'cancelled') {
+          setError(status.error || 'Generation interrupted.')
+          setLoading(false)
+          setOperationId('')
+          setOperation(null)
         } else if (status.status === 'failed') {
           setError(status.error || 'Generation failed.')
           setLoading(false)
@@ -507,6 +513,21 @@ export default function App() {
     } catch (e) {
       setError(e.message || 'Request failed.')
       setLoading(false)
+    }
+  }
+
+  const handleInterrupt = async () => {
+    if (!operationId || !loading) return
+    const opId = operationId
+    setError('')
+    try {
+      await cancelOperation(opId)
+    } catch (e) {
+      setError(e.message || 'Failed to interrupt generation.')
+    } finally {
+      setLoading(false)
+      setOperationId('')
+      setOperation(null)
     }
   }
 
@@ -695,14 +716,29 @@ export default function App() {
               onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSubmit() } }}
               rows={1}
             />
-            <button
-              className="input-area__send"
-              onClick={handleSubmit}
-              disabled={!prompt.trim() || loading || modelStatus === 'needs_setup'}
-              type="button"
-            >
-              {loading ? '…' : sessionId ? 'Refine' : 'Generate'}
-            </button>
+            <div className="input-area__actions">
+              <button
+                className="input-area__send"
+                onClick={handleSubmit}
+                disabled={!prompt.trim() || loading || modelStatus === 'needs_setup'}
+                type="button"
+              >
+                {loading ? 'Running…' : sessionId ? 'Refine' : 'Generate'}
+              </button>
+              {loading && (
+                <button
+                  className="input-area__stop"
+                  onClick={handleInterrupt}
+                  type="button"
+                  title="Interrupt generation"
+                  aria-label="Interrupt generation"
+                >
+                  <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
+                    <rect x="2" y="2" width="8" height="8" rx="1.5" fill="currentColor" />
+                  </svg>
+                </button>
+              )}
+            </div>
           </div>
         </main>
       </div>

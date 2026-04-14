@@ -601,6 +601,30 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); font
 .input-area__send:hover { opacity: .85; }
 .input-area__send:disabled { opacity: .4; cursor: not-allowed; }
 
+.input-area__actions {
+  align-self: flex-end;
+  display: flex;
+  gap: 8px;
+}
+
+.input-area__stop {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  border-radius: var(--radius-lg);
+  border: 1px solid rgba(248,81,73,.45);
+  background: rgba(248,81,73,.12);
+  color: var(--danger);
+  cursor: pointer;
+  transition: background .15s, opacity .15s, border-color .15s;
+}
+.input-area__stop:hover {
+  background: rgba(248,81,73,.2);
+  border-color: rgba(248,81,73,.7);
+}
+
 /* ── Loading ────────────────────────────────────────────────────── */
 .loading {
   background: var(--surface);
@@ -1365,6 +1389,15 @@ body {
 
   .input-area__send {
     padding: 10px 12px;
+  }
+
+  .input-area__actions {
+    gap: 6px;
+  }
+
+  .input-area__stop {
+    width: 40px;
+    height: 40px;
   }
 
   .msg__bubble {

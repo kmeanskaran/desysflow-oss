@@ -135,3 +135,7 @@ export function startFollowUpAsync(
 export function getOperationStatus(operationId) {
   return request(`/operations/${operationId}`, { method: 'GET', headers: {} }, 20_000)
 }
+
+export function cancelOperation(operationId) {
+  return request(`/operations/${operationId}/cancel`, { method: 'POST', headers: {} }, 20_000)
+}
