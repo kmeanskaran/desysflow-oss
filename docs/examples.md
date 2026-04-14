@@ -3,10 +3,10 @@
 ## Basic Local Design Generation
 
 ```bash
-./letsvibedesign cli
+letsvibedesign cli
 ```
 
-Then keep working from the `letsvibe>` prompt with `run`, `/design <prompt>`, `/restart`, or `/bye`.
+Then keep working from the `letsvibe>` prompt with `run`, `design <prompt>`, `restart`, or `bye`.
 
 Or run the command directly:
 
@@ -27,27 +27,7 @@ desysflow redesign \
 ## Run API + UI Together
 
 ```bash
-./letsvibedesign dev
-```
-
-## Run API Only
-
-```bash
-./letsvibedesign api
-```
-
-## Run UI Only
-
-```bash
-./letsvibedesign ui
-```
-
-UI only expects the API to already be running, usually with `./letsvibedesign api`.
-
-## Validate Provider/Model
-
-```bash
-./letsvibedesign check
+letsvibedesign dev
 ```
 
 ## Generate with Explicit Options

@@ -8,13 +8,10 @@ cd "$ROOT_DIR"
 usage() {
   cat <<'EOF'
 Usage:
-  ./letsvibedesign              Interactive wizard - pick a run mode
-  ./letsvibedesign cli          Run basic CLI design flow
-  ./letsvibedesign dev          Start API + UI together (http://localhost:5173)
-  ./letsvibedesign api          Start API only (http://localhost:8000/docs)
-  ./letsvibedesign ui           Start UI only (http://localhost:5173)
-  ./letsvibedesign check        Check model/provider availability
-  ./letsvibedesign help         Show this message
+  letsvibedesign                Interactive wizard - pick a run mode
+  letsvibedesign cli            Run basic CLI design flow
+  letsvibedesign dev            Start API + UI together (http://localhost:5173)
+  letsvibedesign help           Show this message
 EOF
 }
 
@@ -30,18 +27,12 @@ pick_mode() {
 Select start mode:
   1) cli   - basic design flow
   2) dev   - API + UI together
-  3) api   - backend API only
-  4) ui    - frontend UI only
-  5) check - model health check
 EOF
-  printf "Choice [1-5] (default: 1): " >&2
+  printf "Choice [1-2] (default: 1): " >&2
   read -r raw
   case "${raw:-1}" in
     1|cli) echo "cli" ;;
     2|dev) echo "dev" ;;
-    3|api) echo "api" ;;
-    4|ui) echo "ui" ;;
-    5|check) echo "check" ;;
     *)
       echo "Invalid choice: ${raw}" >&2
       echo "cli"
@@ -68,21 +59,6 @@ run_mode() {
       source_env
       exec ./scripts/dev.sh
       ;;
-    api)
-      ensure_bootstrap
-      source_env
-      exec ./scripts/api.sh
-      ;;
-    ui)
-      ensure_bootstrap
-      source_env
-      exec ./scripts/ui.sh
-      ;;
-    check)
-      ensure_bootstrap
-      source_env
-      exec uv run python scripts/check_model.py
-      ;;
     help|-h|--help)
       usage
       ;;
@@ -100,10 +76,10 @@ run_cli_loop() {
 
   echo "Starting CLI design flow."
   echo "After each run:"
-  echo "  - /design <prompt> to run with a prompt"
-  echo "  - /design to enter a prompt interactively"
-  echo "  - /restart to pick mode again"
-  echo "  - /bye to exit"
+  echo "  - design <prompt> to run with a prompt"
+  echo "  - design to enter a prompt interactively"
+  echo "  - restart to pick mode again"
+  echo "  - bye to exit"
 
   local should_run=1
   local choice=""
@@ -121,7 +97,7 @@ run_cli_loop() {
   while true; do
     if [ "$should_run" -eq 1 ]; then
       if ! run_design "$next_prompt"; then
-        echo "Design run exited with an error. You can try again, /restart, or /bye."
+        echo "Design run exited with an error. You can try again, restart, or bye."
       fi
       next_prompt=""
     fi
@@ -132,10 +108,10 @@ run_cli_loop() {
     fi
 
     case "${choice}" in
-      ""|/run|run)
+      ""|run)
         should_run=1
         ;;
-      /design)
+      design)
         printf "prompt> "
         if read -r next_prompt; then
           should_run=1
@@ -143,15 +119,15 @@ run_cli_loop() {
           break
         fi
         ;;
-      /design\ *)
-        next_prompt="${choice#/design }"
+      design\ *)
+        next_prompt="${choice#design }"
         should_run=1
         ;;
-      /bye|bye|/exit|exit|quit|/quit)
+      bye|exit|quit)
         echo "Bye."
         break
         ;;
-      /restart|restart)
+      restart)
         choice="$(pick_mode)"
         if [ "$choice" = "cli" ]; then
           should_run=1
@@ -160,17 +136,13 @@ run_cli_loop() {
           break
         fi
         ;;
-      /help|help)
+      help)
         echo "Commands:"
-        echo "  [Enter|run]         run design again"
-        echo "  /design             ask for prompt, then run"
-        echo "  /design <prompt>    run with prompt"
-        echo "  /restart            show mode picker"
-        echo "  /bye                exit"
-        should_run=0
-        ;;
-      /*)
-        echo "Unknown input: ${choice}. Use /help, /restart, or /bye."
+        echo "  [Enter|run]       run design again"
+        echo "  design            ask for prompt, then run"
+        echo "  design <prompt>   run with prompt"
+        echo "  restart           show mode picker"
+        echo "  bye               exit"
         should_run=0
         ;;
       *)

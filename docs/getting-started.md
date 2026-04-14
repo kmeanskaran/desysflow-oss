@@ -27,7 +27,7 @@ letsvibedesign
 Run the single bootstrap entrypoint:
 
 ```bash
-./letsvibedesign
+letsvibedesign
 ```
 
 This will:
@@ -41,15 +41,12 @@ This will:
 ## 2. Run Modes
 
 ```bash
-./letsvibedesign cli   # CLI workflow
-./letsvibedesign dev   # API + UI
-./letsvibedesign api   # API only
-./letsvibedesign ui    # UI only
-./letsvibedesign check # model availability check
+letsvibedesign cli   # CLI workflow
+letsvibedesign dev   # API + UI
 ```
 
 Notes:
-- `./letsvibedesign` (without args) opens an interactive wizard with the same 5 modes.
+- `letsvibedesign` (without args) opens an interactive wizard with the same 2 modes.
 - `dev` runs both services and prints both URLs.
 - `cli` runs the persistent CLI loop and returns to `letsvibe>` after each generation.
 
@@ -63,15 +60,15 @@ Notes:
 Guided:
 
 ```bash
-./letsvibedesign cli
+letsvibedesign cli
 ```
 
 The launcher stays open after each run and accepts:
 - `Enter` or `run` to run again
-- `/design` to enter a prompt interactively
-- `/design <prompt>` to run directly with that prompt
-- `/restart` to reopen the mode picker
-- `/bye` to exit
+- `design` to enter a prompt interactively
+- `design <prompt>` to run directly with that prompt
+- `restart` to reopen the mode picker
+- `bye` to exit
 
 Direct:
 
@@ -85,7 +82,7 @@ desysflow redesign --source . --out ./desysflow --project my-project --focus "im
 Start the UI with the API:
 
 ```bash
-./letsvibedesign dev
+letsvibedesign dev
 ```
 
 Then:
