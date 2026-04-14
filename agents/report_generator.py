@@ -190,9 +190,30 @@ def _clean_json_text(text: str) -> str:
     return cleaned
 
 
+def _extract_best_json_candidate(raw: str) -> str:
+    """Pick the most likely JSON payload from a raw model response."""
+    text = raw.replace("\ufeff", "").strip()
+    if not text:
+        return ""
+
+    # Prefer fenced blocks that look like JSON and keep the largest one.
+    fence_matches = re.findall(r"```(?:json)?\s*\n?([\s\S]*?)```", text)
+    scored: list[str] = []
+    for block in fence_matches:
+        candidate = block.strip()
+        if candidate and any(ch in candidate for ch in ("{", "[")):
+            scored.append(candidate)
+    if scored:
+        return max(scored, key=len)
+
+    return extract_json_block(text)
+
+
 def _parse_json_with_repair(raw: str, llm, label: str) -> dict:
     """Best-effort parse with deterministic cleanup + LLM repair fallback."""
-    candidate = extract_json_block(raw)
+    candidate = _extract_best_json_candidate(raw)
+    if not candidate.strip():
+        raise ValueError(f"{label} model response did not contain JSON content.")
 
     # Attempt 1: strict decode directly.
     try:
@@ -215,8 +236,18 @@ def _parse_json_with_repair(raw: str, llm, label: str) -> dict:
     repaired_raw = normalize_llm_text(
         repair_resp.content if hasattr(repair_resp, "content") else repair_resp
     )
-    repaired_candidate = _clean_json_text(extract_json_block(repaired_raw))
+    repaired_candidate = _clean_json_text(_extract_best_json_candidate(repaired_raw))
+    if not repaired_candidate.strip():
+        raise ValueError(f"{label} JSON repair produced empty output.")
     return json.loads(repaired_candidate)
+
+
+def _retry_generation_prompt(label: str) -> str:
+    return (
+        f"{label} generation retry:\n"
+        "Return ONLY one compact, valid JSON object.\n"
+        "No markdown, no commentary, no trailing commas, no truncation."
+    )
 
 
 def report_generator(state: AgentState) -> Dict[str, Any]:
@@ -250,7 +281,18 @@ def report_generator(state: AgentState) -> Dict[str, Any]:
             hld_resp.content if hasattr(hld_resp, "content") else hld_resp
         )
         logger.debug("HLD response: %s", hld_raw[:500])
-        hld_report = _parse_json_with_repair(hld_raw, llm, "HLD")
+        try:
+            hld_report = _parse_json_with_repair(hld_raw, llm, "HLD")
+        except Exception as first_exc:
+            logger.warning("HLD parse failed, retrying with compact regeneration: %s", first_exc)
+            hld_retry_resp = llm.invoke([
+                {"role": "system", "content": _HLD_SYSTEM_PROMPT},
+                {"role": "user", "content": context + _retry_generation_prompt("HLD")},
+            ])
+            hld_retry_raw = normalize_llm_text(
+                hld_retry_resp.content if hasattr(hld_retry_resp, "content") else hld_retry_resp
+            )
+            hld_report = _parse_json_with_repair(hld_retry_raw, llm, "HLD")
         logger.info("HLD report generated successfully")
     except Exception as exc:
         logger.error("HLD generation failed: %s", exc)
@@ -275,7 +317,18 @@ def report_generator(state: AgentState) -> Dict[str, Any]:
             lld_resp.content if hasattr(lld_resp, "content") else lld_resp
         )
         logger.debug("LLD response: %s", lld_raw[:500])
-        lld_report = _parse_json_with_repair(lld_raw, llm, "LLD")
+        try:
+            lld_report = _parse_json_with_repair(lld_raw, llm, "LLD")
+        except Exception as first_exc:
+            logger.warning("LLD parse failed, retrying with compact regeneration: %s", first_exc)
+            lld_retry_resp = llm.invoke([
+                {"role": "system", "content": _LLD_SYSTEM_PROMPT},
+                {"role": "user", "content": context + _retry_generation_prompt("LLD")},
+            ])
+            lld_retry_raw = normalize_llm_text(
+                lld_retry_resp.content if hasattr(lld_retry_resp, "content") else lld_retry_resp
+            )
+            lld_report = _parse_json_with_repair(lld_retry_raw, llm, "LLD")
         logger.info("LLD report generated successfully")
     except Exception as exc:
         logger.error("LLD generation failed: %s", exc)

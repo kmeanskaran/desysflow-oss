@@ -76,6 +76,7 @@ SESSION_STORE = get_session_store()
 CONVERSATION_STORE = get_conversation_store()
 _OPERATIONS: Dict[str, Dict[str, Any]] = {}
 _OPERATIONS_LOCK = threading.Lock()
+_OPERATION_TASKS: Dict[str, asyncio.Task[Any]] = {}
 _MAX_OPERATION_HISTORY = 200
 
 
@@ -103,7 +104,7 @@ def _create_operation(mode: str, steps: list[Dict[str, str]]) -> str:
         if len(_OPERATIONS) > _MAX_OPERATION_HISTORY:
             oldest = sorted(_OPERATIONS.items(), key=lambda kv: kv[1].get("updated_at", ""))[:20]
             for key, value in oldest:
-                if value.get("status") in {"completed", "failed"}:
+                if value.get("status") in {"completed", "failed", "cancelled"}:
                     _OPERATIONS.pop(key, None)
     return operation_id
 
@@ -139,6 +140,8 @@ def _operation_complete(operation_id: str, result: Dict[str, Any]) -> None:
         op = _OPERATIONS.get(operation_id)
         if not op:
             return
+        if op.get("status") == "cancelled":
+            return
         op["status"] = "completed"
         op["progress_percent"] = 100
         op["result"] = result
@@ -150,9 +153,43 @@ def _operation_fail(operation_id: str, error: str) -> None:
         op = _OPERATIONS.get(operation_id)
         if not op:
             return
+        if op.get("status") == "cancelled":
+            return
         op["status"] = "failed"
         op["error"] = error
         op["updated_at"] = _now_iso()
+
+
+def _operation_cancel(operation_id: str, reason: str = "Cancelled by user.") -> bool:
+    with _OPERATIONS_LOCK:
+        op = _OPERATIONS.get(operation_id)
+        if not op:
+            return False
+        if op.get("status") in {"completed", "failed", "cancelled"}:
+            return True
+        op["status"] = "cancelled"
+        op["error"] = reason
+        op["updated_at"] = _now_iso()
+    return True
+
+
+def _register_operation_task(operation_id: str, task: asyncio.Task[Any]) -> None:
+    with _OPERATIONS_LOCK:
+        _OPERATION_TASKS[operation_id] = task
+
+    def _cleanup(_task: asyncio.Task[Any]) -> None:
+        with _OPERATIONS_LOCK:
+            _OPERATION_TASKS.pop(operation_id, None)
+
+    task.add_done_callback(_cleanup)
+
+
+def _cancel_operation_task(operation_id: str) -> bool:
+    with _OPERATIONS_LOCK:
+        task = _OPERATION_TASKS.get(operation_id)
+    if not task:
+        return False
+    return task.cancel()
 
 
 def _run_workflow_with_progress(
@@ -404,6 +441,18 @@ async def get_operation_status(operation_id: str) -> Dict[str, Any]:
     return op
 
 
+@router.post("/operations/{operation_id}/cancel")
+async def cancel_operation(operation_id: str) -> Dict[str, Any]:
+    """Cancel a running async orchestration operation."""
+    op = _operation_get(operation_id)
+    if not op:
+        raise HTTPException(status_code=404, detail="Operation not found.")
+    _operation_cancel(operation_id, "Cancelled by user.")
+    _cancel_operation_task(operation_id)
+    updated = _operation_get(operation_id)
+    return updated or {"operation_id": operation_id, "status": "cancelled"}
+
+
 async def _run_design_async_operation(
     operation_id: str,
     user_input: str,
@@ -486,6 +535,9 @@ async def _run_design_async_operation(
             execution_mode="full" if llm_available else "fallback",
         ).model_dump()
         _operation_complete(operation_id, response)
+    except asyncio.CancelledError:
+        _operation_cancel(operation_id, "Cancelled by user.")
+        raise
     except Exception as exc:
         logger.exception("Async design operation failed")
         _operation_fail(operation_id, f"Design execution failed: {exc}")
@@ -598,6 +650,9 @@ async def _run_followup_async_operation(
             execution_mode="full" if llm_available else "fallback",
         ).model_dump()
         _operation_complete(operation_id, response)
+    except asyncio.CancelledError:
+        _operation_cancel(operation_id, "Cancelled by user.")
+        raise
     except Exception as exc:
         logger.exception("Async follow-up operation failed")
         existing = _ensure_live_session(request.session_id)
@@ -653,7 +708,7 @@ async def design_system_async(request: DesignRequest) -> Dict[str, Any]:
 
     try:
         operation_id = _create_operation("design", list(DESIGN_PROGRESS_STEPS))
-        asyncio.create_task(
+        task = asyncio.create_task(
             _run_design_async_operation(
                 operation_id=operation_id,
                 user_input=user_input,
@@ -661,6 +716,7 @@ async def design_system_async(request: DesignRequest) -> Dict[str, Any]:
                 diagram_style=diagram_style,
             )
         )
+        _register_operation_task(operation_id, task)
         return {"operation_id": operation_id, "status": "running"}
     finally:
         clear_request_model_override()
@@ -693,7 +749,8 @@ async def design_followup_async(request: FollowUpRequest) -> Dict[str, Any]:
 
     try:
         operation_id = _create_operation("followup", list(FOLLOWUP_PROGRESS_STEPS))
-        asyncio.create_task(_run_followup_async_operation(operation_id=operation_id, request=request))
+        task = asyncio.create_task(_run_followup_async_operation(operation_id=operation_id, request=request))
+        _register_operation_task(operation_id, task)
         return {"operation_id": operation_id, "status": "running"}
     finally:
         clear_request_model_override()
