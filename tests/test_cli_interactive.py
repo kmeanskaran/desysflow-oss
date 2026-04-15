@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from desysflow_cli.__main__ import (
+    _collect_prompt_text,
     _resolve_ollama_model_selection,
     collect_source_checkpoints,
     has_meaningful_source_files,
@@ -65,3 +66,27 @@ def test_collect_source_checkpoints_empty_repo_has_no_inferred_language(tmp_path
 
     assert checkpoints.has_meaningful_files is False
     assert checkpoints.inferred_language == ""
+
+
+def test_collect_prompt_text_empty_repo_skips_input_mode_and_requests_prompt(monkeypatch) -> None:
+    responses = iter(["design an ai code review app"])
+    monkeypatch.setattr("builtins.input", lambda _prompt="": next(responses))
+
+    prompt, mode = _collect_prompt_text(source_has_files=False, has_existing_design=False)
+
+    assert mode == "ask"
+    assert prompt == "design an ai code review app"
+
+
+def test_collect_prompt_text_non_empty_repo_keeps_vibe_now_default(monkeypatch) -> None:
+    responses = iter([""])
+    monkeypatch.setattr("builtins.input", lambda _prompt="": next(responses))
+
+    prompt, mode = _collect_prompt_text(
+        source_has_files=True,
+        has_existing_design=False,
+        prompt="",
+    )
+
+    assert mode == "vibe-now"
+    assert prompt == ""

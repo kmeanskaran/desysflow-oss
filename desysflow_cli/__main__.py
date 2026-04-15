@@ -517,24 +517,11 @@ def finalize_options(cfg: RunConfig) -> RunConfig:
         if cfg.command == "/design" and has_existing_design:
             mode = _ask_choice("Design routing",       cfg_list("design_modes", ["smart", "fresh", "refine"]),            mode)
         print("")
-        input_mode = _ask_choice("Input mode", ["vibe-now", "ask"], "vibe-now")
-        print("")
-        if input_mode == "ask":
-            print("  Prompt")
-            if not source_has_files:
-                print("  No code, shell, or markdown files were found in this repository.")
-                print("  Describe the product/feature you want to design from scratch.")
-            elif has_existing_design:
-                print("  Describe the feature/change request for this codebase.")
-            else:
-                print("  Add product constraints/users/scale to guide generation.")
-            entered_prompt = input("  > ").strip()
-            if entered_prompt:
-                prompt = entered_prompt
-        else:
-            if not source_has_files:
-                print("  Empty repository detected.")
-                print("  Proceeding with vibe-now mode and no prompt.")
+        prompt, _ = _collect_prompt_text(
+            source_has_files=source_has_files,
+            has_existing_design=has_existing_design,
+            prompt=prompt,
+        )
 
     focus = cfg.focus.strip() or prompt
     effective_mode = resolve_effective_mode(cfg.command, mode, has_existing_design, focus)
@@ -592,6 +579,36 @@ def _ask_choice(label: str, values: list[str], default: str) -> str:
 
 def ask_option(label: str, values: list[str], default: str) -> str:
     return _ask_choice(label, values, default)
+
+
+def _collect_prompt_text(
+    *,
+    source_has_files: bool,
+    has_existing_design: bool,
+    prompt: str = "",
+) -> tuple[str, str]:
+    prompt_text = prompt.strip()
+
+    if not source_has_files:
+        print("  Prompt")
+        print("  No code, shell, or markdown files were found in this repository.")
+        print("  Describe the product/feature you want to design from scratch.")
+        entered_prompt = input("  > ").strip()
+        return (entered_prompt or prompt_text), "ask"
+
+    input_mode = _ask_choice("Input mode", ["vibe-now", "ask"], "vibe-now")
+    print("")
+    if input_mode == "ask":
+        print("  Prompt")
+        if has_existing_design:
+            print("  Describe the feature/change request for this codebase.")
+        else:
+            print("  Add product constraints/users/scale to guide generation.")
+        entered_prompt = input("  > ").strip()
+        if entered_prompt:
+            prompt_text = entered_prompt
+
+    return prompt_text, input_mode
 
 
 def print_main_help() -> None:
@@ -2400,23 +2417,10 @@ def run_wizard() -> int:
         print(f"  Checkpoint: dominant repository language detected -> {language.title()}")
     language = _ask_choice("Language", [item.title() for item in languages], language.title()).lower()
 
-    prompt_text = ""
-    prompt_mode = _ask_choice("Input mode", ["vibe-now", "ask"], "vibe-now")
-    print("")
-    if prompt_mode == "ask":
-        print("  Prompt")
-        if not source_has_files:
-            print("  No code, shell, or markdown files were found in this repository.")
-            print("  Describe the product/feature you want to design from scratch.")
-        elif has_existing_design:
-            print("  Describe the feature/change request for this codebase.")
-        else:
-            print("  Describe product constraints/users/scale.")
-        print("")
-        prompt_text = input("  > ").strip()
-    elif not source_has_files:
-        print("  Empty repository detected.")
-        print("  Proceeding with vibe-now mode and no prompt.")
+    prompt_text, prompt_mode = _collect_prompt_text(
+        source_has_files=source_has_files,
+        has_existing_design=has_existing_design,
+    )
 
     # ── Summary ───────────────────────────────────────────────────
     print_sep("Ready")
