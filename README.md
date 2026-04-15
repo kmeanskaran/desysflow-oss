@@ -13,10 +13,6 @@
 
 ![DesysFlow Banner](assets/desysflow-banner.png)
 
-<p align="left">
-  <img src="assets/desysflow-logo.png" alt="DesysFlow Logo" width="120" />
-</p>
-
 DesysFlow OSS is a local-first, agentic system design platform that converts your codebase and product goals into versioned architecture artifacts. It provides a CLI for fast iteration, a local API backend, and a lightweight UI for guided design and refinement.
 
 It includes:
