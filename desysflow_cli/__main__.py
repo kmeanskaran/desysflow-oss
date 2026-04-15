@@ -133,6 +133,17 @@ MEANINGFUL_SOURCE_FILENAMES = {
     "readme.markdown",
 }
 
+LANGUAGE_BY_SUFFIX = {
+    ".py": "python",
+    ".js": "typescript",
+    ".jsx": "typescript",
+    ".ts": "typescript",
+    ".tsx": "typescript",
+    ".go": "go",
+    ".java": "java",
+    ".rs": "rust",
+}
+
 # Secret detection patterns — matched case-insensitively across all generated docs
 SECRET_PATTERNS = [
     # Generic credentials
@@ -258,6 +269,12 @@ class ChatConfig:
 class HistoryConfig:
     output_root: Path
     limit: int
+
+
+@dataclass
+class SourceCheckpoints:
+    has_meaningful_files: bool
+    inferred_language: str
 
 
 # ----------------------------------------------------------------------
@@ -466,7 +483,9 @@ def finalize_options(cfg: RunConfig) -> RunConfig:
         child.is_dir() and child.name.startswith("v")
         for child in project_root.iterdir()
     ) if project_root.exists() else False
-    source_has_files = has_meaningful_source_files(cfg.source)
+    language_choices = cfg_list("languages", ["python", "typescript", "go", "java", "rust"])
+    source_checkpoints = collect_source_checkpoints(cfg.source, language_choices)
+    source_has_files = source_checkpoints.has_meaningful_files
 
     defaults = cfg_defaults()
     language = cfg.language or os.getenv("DESYSFLOW_LANGUAGE", "").strip() or defaults.get("language", "python")
@@ -478,7 +497,14 @@ def finalize_options(cfg: RunConfig) -> RunConfig:
     prompt   = cfg.prompt.strip()
 
     if interactive:
-        language = _ask_choice("Implementation language", cfg_list("languages", ["python", "typescript", "go", "java", "rust"]), language)
+        if source_has_files:
+            if not cfg.language and not os.getenv("DESYSFLOW_LANGUAGE", "").strip() and source_checkpoints.inferred_language:
+                language = source_checkpoints.inferred_language
+                print(f"  Checkpoint: dominant repository language detected -> {language}")
+            else:
+                language = _ask_choice("Implementation language", language_choices, language)
+        else:
+            print(f"  Checkpoint: source repository is empty -> using default language '{language}'")
         style    = _ask_choice("Report style",          cfg_list("styles", ["balanced", "minimal", "detailed"]),          style)
         cloud    = _ask_choice("Cloud target",          cfg_list("clouds", ["local", "aws", "gcp", "azure", "hybrid"]),   cloud)
         web      = _ask_choice("Web search mode",       cfg_list("search_modes", ["auto", "on", "off"]),                   web)
@@ -769,6 +795,37 @@ def has_meaningful_source_files(source: Path) -> bool:
             if path.is_file() and _is_meaningful_source_file(path):
                 return True
     return False
+
+
+def infer_dominant_language(source: Path, allowed_languages: list[str]) -> str:
+    allowed = {item.lower() for item in allowed_languages}
+    counts: dict[str, int] = {}
+
+    for root, dirs, names in os.walk(source):
+        dirs[:] = [d for d in dirs if d not in SKIP_DIRS and not d.startswith(".")]
+        for name in names:
+            if name.startswith("."):
+                continue
+            suffix = Path(name).suffix.lower()
+            language = LANGUAGE_BY_SUFFIX.get(suffix, "")
+            if not language or language not in allowed:
+                continue
+            counts[language] = counts.get(language, 0) + 1
+
+    if not counts:
+        return ""
+
+    ranked = sorted(
+        counts.items(),
+        key=lambda item: (-item[1], allowed_languages.index(item[0])),
+    )
+    return ranked[0][0]
+
+
+def collect_source_checkpoints(source: Path, allowed_languages: list[str]) -> SourceCheckpoints:
+    has_files = has_meaningful_source_files(source)
+    inferred_language = infer_dominant_language(source, allowed_languages) if has_files else ""
+    return SourceCheckpoints(has_meaningful_files=has_files, inferred_language=inferred_language)
 
 
 def resolve_effective_mode(command: str, mode: str, has_existing_design: bool, focus: str) -> str:
@@ -2311,10 +2368,14 @@ def run_wizard() -> int:
     else:
         os.environ["OLLAMA_MODEL"] = model
 
-    # ── Language ─────────────────────────────────────────────────
+    # ── Source checkpoints ───────────────────────────────────────
+    source_path = Path.cwd()
     languages = cfg_list("languages", ["python", "typescript", "go", "java", "rust"])
+    source_checkpoints = collect_source_checkpoints(source_path, languages)
+    source_has_files = source_checkpoints.has_meaningful_files
+
+    # ── Design preferences ───────────────────────────────────────
     print_sep("Design preferences")
-    language = _ask_choice("Language", [item.title() for item in languages], languages[0].title()).lower()
 
     # ── Style ────────────────────────────────────────────────────
     styles = cfg_list("styles", ["minimal", "balanced", "detailed"])
@@ -2331,8 +2392,6 @@ def run_wizard() -> int:
 
     # ── Prompt / focus ───────────────────────────────────────────
     print_sep("Your design request")
-    source_path = Path.cwd()
-    source_has_files = has_meaningful_source_files(source_path)
     project = default_project_name(source_path)
     output_root = default_output_root()
     project_root = output_root / project
@@ -2340,9 +2399,19 @@ def run_wizard() -> int:
         child.is_dir() and child.name.startswith("v")
         for child in project_root.iterdir()
     ) if project_root.exists() else False
+    language = languages[0]
+    if source_has_files and source_checkpoints.inferred_language:
+        language = source_checkpoints.inferred_language
+        print(f"  Checkpoint: dominant repository language detected -> {language.title()}")
+    elif source_has_files:
+        language = _ask_choice("Language", [item.title() for item in languages], languages[0].title()).lower()
+    else:
+        print(f"  Checkpoint: source repository is empty -> using default language '{language}'")
+
     prompt_text = ""
     if not source_has_files:
         print("  No code, shell, or markdown files were found in this repository.")
+        print("  Input mode fixed to: ask")
         print("  Prompt is required to start from scratch.")
         print("")
         while True:

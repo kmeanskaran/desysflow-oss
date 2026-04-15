@@ -2,7 +2,12 @@ from pathlib import Path
 
 import pytest
 
-from desysflow_cli.__main__ import _resolve_ollama_model_selection, has_meaningful_source_files
+from desysflow_cli.__main__ import (
+    _resolve_ollama_model_selection,
+    collect_source_checkpoints,
+    has_meaningful_source_files,
+    infer_dominant_language,
+)
 
 
 def test_has_meaningful_source_files_ignores_non_source_files(tmp_path: Path) -> None:
@@ -43,3 +48,20 @@ def test_resolve_ollama_model_selection_aborts_when_user_declines_retry(monkeypa
             base_url="http://localhost:11434",
             default="gpt-oss:20b-cloud",
         )
+
+
+def test_infer_dominant_language_prefers_majority_extensions(tmp_path: Path) -> None:
+    (tmp_path / "app.py").write_text("print('x')", encoding="utf-8")
+    (tmp_path / "worker.py").write_text("print('y')", encoding="utf-8")
+    (tmp_path / "dashboard.ts").write_text("export {}", encoding="utf-8")
+
+    language = infer_dominant_language(tmp_path, ["python", "typescript", "go", "java", "rust"])
+
+    assert language == "python"
+
+
+def test_collect_source_checkpoints_empty_repo_has_no_inferred_language(tmp_path: Path) -> None:
+    checkpoints = collect_source_checkpoints(tmp_path, ["python", "typescript", "go", "java", "rust"])
+
+    assert checkpoints.has_meaningful_files is False
+    assert checkpoints.inferred_language == ""
