@@ -1,6 +1,23 @@
 # DesysFlow OSS
 
-DesysFlow OSS is a local-first system design generator that turns source code and goals into versioned architecture artifacts.
+![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white)
+![npm](https://img.shields.io/badge/npm-9%2B-CB3837?logo=npm&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-0.110%2B-009688?logo=fastapi&logoColor=white)
+![LangGraph](https://img.shields.io/badge/LangGraph-%3E%3D0.2.0-1C3C3C)
+![LangChain](https://img.shields.io/badge/LangChain-0.3%2B-1C3C3C)
+![Ollama](https://img.shields.io/badge/Ollama-Supported-000000)
+![OpenAI](https://img.shields.io/badge/OpenAI-Supported-412991?logo=openai&logoColor=white)
+![Anthropic](https://img.shields.io/badge/Anthropic-Supported-191919)
+![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black)
+![Vite](https://img.shields.io/badge/Vite-6%2B-646CFF?logo=vite&logoColor=white)
+
+![DesysFlow Banner](assets/desysflow-banner.png)
+
+<p align="left">
+  <img src="assets/desysflow-logo.png" alt="DesysFlow Logo" width="120" />
+</p>
+
+DesysFlow OSS is a local-first, agentic system design platform that converts your codebase and product goals into versioned architecture artifacts. It provides a CLI for fast iteration, a local API backend, and a lightweight UI for guided design and refinement.
 
 It includes:
 - A simple CLI (`desysflow`) for local generation and refinement
