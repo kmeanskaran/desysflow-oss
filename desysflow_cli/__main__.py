@@ -93,6 +93,46 @@ SKIP_DIRS = {
     "desysflow",
 }
 
+MEANINGFUL_SOURCE_SUFFIXES = {
+    ".c",
+    ".cc",
+    ".cpp",
+    ".cs",
+    ".cxx",
+    ".go",
+    ".h",
+    ".hpp",
+    ".java",
+    ".js",
+    ".jsx",
+    ".kt",
+    ".kts",
+    ".md",
+    ".mdown",
+    ".mkd",
+    ".markdown",
+    ".php",
+    ".py",
+    ".rb",
+    ".rs",
+    ".scala",
+    ".sh",
+    ".swift",
+    ".ts",
+    ".tsx",
+    ".zsh",
+}
+MEANINGFUL_SOURCE_FILENAMES = {
+    "bashrc",
+    "dockerfile",
+    "makefile",
+    "readme",
+    "readme.md",
+    "readme.mdown",
+    "readme.mkd",
+    "readme.markdown",
+}
+
 # Secret detection patterns — matched case-insensitively across all generated docs
 SECRET_PATTERNS = [
     # Generic credentials
@@ -265,16 +305,53 @@ def _prompt_provider(default: str = "") -> str:
 def _prompt_model(provider: str, installed: list[str], default: str = "") -> str:
     default = default or _provider_defaults().get(provider, {}).get("model", "")
     if provider == "ollama":
-        if not installed:
-            print("  No Ollama models installed.")
-            print("  Install one first:  ollama pull <model>")
-            return ""
-        print(f"  Installed models: {', '.join(installed)}")
-        if not default:
-            default = installed[0]
-    placeholder = f" (default: {default})" if default else ": "
-    name = input(f"  Model name{placeholder}").strip()
+        print("  Model name")
+        if default:
+            print(f"  Default: {default}")
+        print("  Enter your installed Ollama model name.")
+    placeholder = f" [{default}]" if default else ""
+    name = input(f"  >{placeholder} ").strip()
     return name or default
+
+
+def _confirm_choice(prompt: str, default: str = "n") -> bool:
+    suffix = "[Y/n]" if default.lower() == "y" else "[y/N]"
+    raw = input(f"{prompt} {suffix}: ").strip().lower()
+    if not raw:
+        return default.lower() == "y"
+    return raw in ("y", "yes")
+
+
+def _resolve_ollama_model_selection(
+    installed: list[str],
+    base_url: str,
+    default: str = "",
+) -> str:
+    while True:
+        model = _prompt_model("ollama", installed, default)
+        if not model:
+            print("  Model name is required for Ollama.")
+            print("")
+            continue
+        if model in installed:
+            return model
+
+        print("")
+        print(f"  '{model}' is not installed in Ollama at {base_url}.")
+        print(f"  Download it with: ollama pull {model}")
+        print("")
+        if _confirm_choice("  Choose a different model?", default="y"):
+            default = model
+            print("")
+            continue
+        raise SystemExit("Aborted.")
+
+
+def _is_meaningful_source_file(path: Path) -> bool:
+    name = path.name.lower()
+    if name in MEANINGFUL_SOURCE_FILENAMES:
+        return True
+    return path.suffix.lower() in MEANINGFUL_SOURCE_SUFFIXES
 
 
 def _prompt_api_key(provider: str, current: str = "") -> str:
@@ -337,7 +414,11 @@ def resolve_model(cfg: RunConfig) -> RunConfig:
 
     env_model_key = "OPENAI_MODEL" if provider == "openai" else ("ANTHROPIC_MODEL" if provider == "anthropic" else "OLLAMA_MODEL")
     model = cfg.model_name or os.getenv(env_model_key, "").strip()
-    if interactive and not model_flags_supplied:
+    if provider == "ollama" and interactive:
+        prompt_default = model or _provider_defaults().get(provider, {}).get("model", "")
+        if not model_flags_supplied or not model:
+            model = _resolve_ollama_model_selection(installed, base_url, prompt_default)
+    elif interactive and not model_flags_supplied:
         model = _prompt_model(provider, installed, model)
     elif not model and interactive:
         model = _prompt_model(provider, installed)
@@ -346,12 +427,18 @@ def resolve_model(cfg: RunConfig) -> RunConfig:
 
     # Ollama validation
     if provider == "ollama" and model and model not in installed:
-        print(f"  [WARNING] '{model}' not in installed models at {base_url}.")
-        print("  Install it with:  ollama pull <model>")
         if interactive:
-            confirm = input("  Continue anyway? [y/N]: ").strip().lower()
-            if confirm not in ("y", "yes"):
+            print("")
+            print(f"  '{model}' is not installed in Ollama at {base_url}.")
+            print(f"  Download it with: ollama pull {model}")
+            print("")
+            if _confirm_choice("  Choose a different model?", default="y"):
+                model = _resolve_ollama_model_selection(installed, base_url, model)
+            else:
                 raise SystemExit("Aborted.")
+        else:
+            print(f"  [WARNING] '{model}' is not installed in Ollama at {base_url}.")
+            print(f"  Install it with: ollama pull {model}")
 
     os.environ["MODEL_PROVIDER"] = provider
     os.environ[env_model_key] = model
@@ -399,25 +486,30 @@ def finalize_options(cfg: RunConfig) -> RunConfig:
         if cfg.command == "/design" and has_existing_design:
             mode = _ask_choice("Design routing",       cfg_list("design_modes", ["smart", "fresh", "refine"]),            mode)
         if not source_has_files:
-            print("  Source appears empty. Prompt is required to start from scratch.")
-            print("  Prompt (required):")
+            print("  No code, shell, or markdown files were found in this repository.")
+            print("  Prompt is required to start from scratch.")
+            print("")
+            print("  Prompt")
             print("  Describe the product/feature you want to design from scratch.")
             while True:
                 entered_prompt = input("  > ").strip()
                 if entered_prompt:
                     prompt = entered_prompt
                     break
+                print("")
                 print("  Prompt cannot be empty for an empty source folder.")
         else:
+            print("")
             input_mode = _ask_choice("Input mode", ["vibe-now", "ask"], "vibe-now")
+            print("")
             if input_mode == "ask":
-                print("  Prompt (optional):")
+                print("  Prompt")
                 if has_existing_design:
                     print("  Describe the feature/change request for this codebase.")
                 else:
                     print("  Add product constraints/users/scale to guide generation.")
             else:
-                print("  Prompt (optional):")
+                print("  Prompt")
                 print("  Add extra guidance; CLI still reads current codebase automatically.")
             entered_prompt = input("  > ").strip()
             if entered_prompt:
@@ -425,7 +517,7 @@ def finalize_options(cfg: RunConfig) -> RunConfig:
 
     focus = cfg.focus.strip() or prompt
     if not source_has_files and not prompt.strip():
-        raise SystemExit("Source folder is empty. Provide a prompt with --prompt to design from scratch.")
+        raise SystemExit("No code, shell, or markdown files found. Provide --prompt to design from scratch.")
     effective_mode = resolve_effective_mode(cfg.command, mode, has_existing_design, focus)
 
     return RunConfig(
@@ -667,14 +759,14 @@ def check_source_for_secrets(source: Path) -> list[str]:
 
 
 def has_meaningful_source_files(source: Path) -> bool:
-    """Return True when source has at least one non-hidden, non-skipped file."""
+    """Return True when source has at least one code, shell, or markdown file."""
     for root, dirs, names in os.walk(source):
         dirs[:] = [d for d in dirs if d not in SKIP_DIRS and not d.startswith(".")]
         for name in names:
             if name.startswith("."):
                 continue
             path = Path(root) / name
-            if path.is_file():
+            if path.is_file() and _is_meaningful_source_file(path):
                 return True
     return False
 
@@ -2203,21 +2295,13 @@ def run_wizard() -> int:
     installed: list[str] = []
     if provider == "ollama":
         installed = list_ollama_models(base_url)
-        if installed:
-            print(f"\n  Local models: {', '.join(installed)}")
-        else:
-            print("\n  No Ollama models found.")
-            print("  Install one:  ollama pull <model>")
 
     default = prov_defaults.get(provider, {}).get("model", "") or (installed[0] if installed else "")
     print("")
-    model = input(f"  Model name" + (f" [{default}]" if default else "") + ": ").strip() or default
-
-    if provider == "ollama" and model and model not in installed:
-        print(f"\n  WARNING: '{model}' not in installed list.")
-        confirm = input("  Continue anyway? [y/N]: ").strip().lower()
-        if confirm not in ("y", "yes"):
-            raise SystemExit("Aborted — run again when your model is installed.")
+    if provider == "ollama":
+        model = _resolve_ollama_model_selection(installed, base_url, default)
+    else:
+        model = input(f"  Model name" + (f" [{default}]" if default else "") + ": ").strip() or default
 
     os.environ["MODEL_PROVIDER"] = provider
     if provider == "openai":
@@ -2258,24 +2342,29 @@ def run_wizard() -> int:
     ) if project_root.exists() else False
     prompt_text = ""
     if not source_has_files:
-        print("  Source appears empty. Prompt is required to start from scratch.")
+        print("  No code, shell, or markdown files were found in this repository.")
+        print("  Prompt is required to start from scratch.")
+        print("")
         while True:
+            print("  Prompt")
             print("  Describe the product/feature you want to design.")
-            print("")
             prompt_text = input("  > ").strip()
             if prompt_text:
                 break
+            print("")
             print("  Prompt cannot be empty for an empty source folder.\n")
     else:
         prompt_mode = _ask_choice("Input mode", ["vibe-now", "ask"], "vibe-now")
+        print("")
         if prompt_mode == "ask":
-            print("  Prompt (optional):")
+            print("  Prompt")
             if has_existing_design:
                 print("  Describe the feature/change request for this codebase.")
             else:
                 print("  Describe product constraints/users/scale.")
         else:
-            print("  Optional prompt to augment codebase-driven generation.")
+            print("  Prompt")
+            print("  Optional guidance to augment codebase-driven generation.")
             print("  Leave blank to use only inferred codebase context.")
         print("")
         prompt_text = input("  > ").strip()
