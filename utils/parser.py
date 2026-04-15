@@ -4,6 +4,7 @@ JSON parsing utilities — extract and validate structured output from LLM text.
 
 from __future__ import annotations
 
+import ast
 import json
 import logging
 import re
@@ -85,6 +86,71 @@ def _repair_json_text(text: str) -> str:
     text = text.strip()
     text = re.sub(r",\s*([}\]])", r"\1", text)
     return text
+
+
+def _normalize_json_candidate(text: str) -> str:
+    """Normalize common model-output artifacts before parsing."""
+    text = text.replace("\ufeff", "").strip()
+    text = (
+        text
+        .replace("“", '"')
+        .replace("”", '"')
+        .replace("’", "'")
+    )
+    text = re.sub(r"//.*?$", "", text, flags=re.MULTILINE)
+    text = re.sub(r"/\*.*?\*/", "", text, flags=re.DOTALL)
+    text = _repair_json_text(text)
+    return text.strip()
+
+
+def _python_literal_candidate(text: str) -> str:
+    """Convert JSON-like text into a safer Python-literal form for fallback parsing."""
+    converted = text
+    converted = re.sub(r"\btrue\b", "True", converted, flags=re.IGNORECASE)
+    converted = re.sub(r"\bfalse\b", "False", converted, flags=re.IGNORECASE)
+    converted = re.sub(r"\bnull\b", "None", converted, flags=re.IGNORECASE)
+    return converted
+
+
+def parse_json_block_loose(raw: Any) -> Union[Dict[str, Any], List[Any]]:
+    """Parse LLM output into JSON with local repairs and Python-literal fallback.
+
+    This is intentionally tolerant for local model outputs that may include:
+    trailing commas, smart quotes, comments, and Python-like dict/list literals.
+    """
+    candidate = _normalize_json_candidate(extract_json_block(normalize_llm_text(raw)))
+    if not candidate:
+        raise ValueError("LLM returned an empty response")
+
+    errors: list[str] = []
+
+    seen_variants: set[str] = set()
+    for variant in (candidate, _repair_json_text(candidate)):
+        if variant in seen_variants:
+            continue
+        seen_variants.add(variant)
+        try:
+            parsed = json.loads(variant)
+            if isinstance(parsed, (dict, list)):
+                return parsed
+        except Exception as exc:
+            errors.append(f"json:{exc}")
+
+    try:
+        py_like = _python_literal_candidate(candidate)
+        parsed = ast.literal_eval(py_like)
+        if isinstance(parsed, (dict, list)):
+            return parsed
+        raise ValueError(f"Expected dict/list, got {type(parsed).__name__}")
+    except Exception as exc:
+        errors.append(f"literal_eval:{exc}")
+
+    unique_errors: list[str] = []
+    for item in errors:
+        if item not in unique_errors:
+            unique_errors.append(item)
+    short = " | ".join(unique_errors[:2]) if unique_errors else "unknown parse failure"
+    raise ValueError(f"Malformed JSON after local repair ({short})")
 
 
 def parse_json_response(

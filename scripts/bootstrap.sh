@@ -114,7 +114,7 @@ if [ -f "$env_file" ] && ! is_true "$overwrite_env"; then
   echo "Keeping existing config at $env_file"
 else
   cat > "$env_file" <<EOF
-DESYSFLOW_STORAGE_ROOT=./.desflow
+DESYSFLOW_STORAGE_ROOT=./.desysflow
 CHAT_STORE_BACKEND=sqlite
 CHAT_DB_PATH=
 SESSION_DB_PATH=

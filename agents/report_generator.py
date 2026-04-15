@@ -15,7 +15,7 @@ from typing import Any, Dict
 
 from schemas.models import AgentState
 from services.llm import get_llm
-from utils.parser import extract_json_block, normalize_llm_text
+from utils.parser import extract_json_block, normalize_llm_text, parse_json_block_loose
 
 logger = logging.getLogger(__name__)
 
@@ -215,20 +215,17 @@ def _parse_json_with_repair(raw: str, llm, label: str) -> dict:
     if not candidate.strip():
         raise ValueError(f"{label} model response did not contain JSON content.")
 
-    # Attempt 1: strict decode directly.
+    # Attempt 1: local tolerant parser for common LLM JSON glitches.
     try:
-        return json.loads(candidate)
+        data = parse_json_block_loose(candidate)
+        if not isinstance(data, dict):
+            raise ValueError(f"{label} response was {type(data).__name__}, expected object")
+        return data
     except Exception as exc:
-        logger.warning("%s JSON parse failed (strict): %s", label, exc)
+        logger.debug("%s local parse failed; invoking JSON repair model: %s", label, exc)
 
-    # Attempt 2: cleanup and retry.
+    # Attempt 2: ask LLM to repair malformed JSON.
     cleaned = _clean_json_text(candidate)
-    try:
-        return json.loads(cleaned)
-    except Exception as exc:
-        logger.warning("%s JSON parse failed (cleaned): %s", label, exc)
-
-    # Attempt 3: ask LLM to repair malformed JSON.
     repair_resp = llm.invoke([
         {"role": "system", "content": _JSON_REPAIR_PROMPT},
         {"role": "user", "content": cleaned},
@@ -236,10 +233,13 @@ def _parse_json_with_repair(raw: str, llm, label: str) -> dict:
     repaired_raw = normalize_llm_text(
         repair_resp.content if hasattr(repair_resp, "content") else repair_resp
     )
-    repaired_candidate = _clean_json_text(_extract_best_json_candidate(repaired_raw))
+    repaired_candidate = _extract_best_json_candidate(repaired_raw)
     if not repaired_candidate.strip():
         raise ValueError(f"{label} JSON repair produced empty output.")
-    return json.loads(repaired_candidate)
+    repaired_data = parse_json_block_loose(_clean_json_text(repaired_candidate))
+    if not isinstance(repaired_data, dict):
+        raise ValueError(f"{label} repaired response was {type(repaired_data).__name__}, expected object")
+    return repaired_data
 
 
 def _retry_generation_prompt(label: str) -> str:
@@ -284,7 +284,7 @@ def report_generator(state: AgentState) -> Dict[str, Any]:
         try:
             hld_report = _parse_json_with_repair(hld_raw, llm, "HLD")
         except Exception as first_exc:
-            logger.warning("HLD parse failed, retrying with compact regeneration: %s", first_exc)
+            logger.info("HLD: compact regeneration retry")
             hld_retry_resp = llm.invoke([
                 {"role": "system", "content": _HLD_SYSTEM_PROMPT},
                 {"role": "user", "content": context + _retry_generation_prompt("HLD")},
@@ -320,7 +320,7 @@ def report_generator(state: AgentState) -> Dict[str, Any]:
         try:
             lld_report = _parse_json_with_repair(lld_raw, llm, "LLD")
         except Exception as first_exc:
-            logger.warning("LLD parse failed, retrying with compact regeneration: %s", first_exc)
+            logger.info("LLD: compact regeneration retry")
             lld_retry_resp = llm.invoke([
                 {"role": "system", "content": _LLD_SYSTEM_PROMPT},
                 {"role": "user", "content": context + _retry_generation_prompt("LLD")},

@@ -12,7 +12,7 @@ from typing import Any, Dict
 
 from schemas.models import AgentState
 from services.llm import get_llm
-from utils.parser import extract_json_block, normalize_llm_text
+from utils.parser import normalize_llm_text, parse_json_block_loose
 
 logger = logging.getLogger(__name__)
 
@@ -172,8 +172,9 @@ def cloud_infra_agent(state: AgentState) -> Dict[str, Any]:
             )
             logger.debug("Cloud infra response (attempt %d): %s", attempt, raw[:500])
 
-            json_str = extract_json_block(raw)
-            data = json.loads(json_str)
+            data = parse_json_block_loose(raw)
+            if not isinstance(data, dict):
+                raise ValueError(f"Expected JSON object from cloud infra agent, got {type(data).__name__}")
 
             tech_stack = _normalize_tech_stack(data.get("tech_stack", {}), preferred_language)
             cloud_infra = _normalize_cloud_infrastructure(data.get("cloud_infrastructure", {}))
@@ -190,7 +191,10 @@ def cloud_infra_agent(state: AgentState) -> Dict[str, Any]:
 
         except Exception as exc:
             last_error = exc
-            logger.warning("Cloud infra generation failed on attempt %d: %s", attempt, exc)
+            if attempt < max_attempts:
+                logger.info("Cloud infra: retrying with stricter JSON request")
+            else:
+                logger.warning("Cloud infra generation failed on final attempt: %s", exc)
             messages.append({"role": "assistant", "content": raw if "raw" in dir() else ""})
             messages.append({
                 "role": "user",
@@ -201,7 +205,7 @@ def cloud_infra_agent(state: AgentState) -> Dict[str, Any]:
             })
 
     # Fallback
-    logger.error("Cloud infra generation failed after %d attempts: %s", max_attempts, last_error)
+    logger.warning("Cloud infra fallback applied after %d attempts", max_attempts)
     tech_stack_fallback = {
         "languages": [preferred_language],
         "frameworks": ["FastAPI", "React"],

@@ -38,3 +38,6 @@ desysflow/
 
 # Claude 
 .claude/
+
+# DeSysFlow artifacts
+.desysflow/

@@ -78,10 +78,19 @@ def default_output_root(base: Path | None = None) -> Path:
     """Prefer an existing hidden output root, otherwise use the documented default."""
     configured = os.getenv("DESYSFLOW_STORAGE_ROOT", "").strip()
     if configured:
-        return Path(configured).expanduser()
+        configured_path = Path(configured).expanduser()
+        # Backward-compat: transparently migrate legacy ".desflow" root naming.
+        if configured_path.name == ".desflow":
+            return configured_path.with_name(".desysflow")
+        return configured_path
     root = base or Path.cwd()
-    hidden = root / ".desflow"
-    return hidden if hidden.exists() else root / "desysflow"
+    hidden = root / ".desysflow"
+    legacy_hidden = root / ".desflow"
+    if hidden.exists():
+        return hidden
+    if legacy_hidden.exists():
+        return hidden
+    return root / "desysflow"
 
 SKIP_DIRS = {
     ".git",
@@ -497,53 +506,37 @@ def finalize_options(cfg: RunConfig) -> RunConfig:
     prompt   = cfg.prompt.strip()
 
     if interactive:
-        if source_has_files:
-            if not cfg.language and not os.getenv("DESYSFLOW_LANGUAGE", "").strip() and source_checkpoints.inferred_language:
-                language = source_checkpoints.inferred_language
-                print(f"  Checkpoint: dominant repository language detected -> {language}")
-            else:
-                language = _ask_choice("Implementation language", language_choices, language)
-        else:
-            print(f"  Checkpoint: source repository is empty -> using default language '{language}'")
+        if source_has_files and not cfg.language and not os.getenv("DESYSFLOW_LANGUAGE", "").strip() and source_checkpoints.inferred_language:
+            language = source_checkpoints.inferred_language
+            print(f"  Checkpoint: dominant repository language detected -> {language}")
+        language = _ask_choice("Implementation language", language_choices, language)
         style    = _ask_choice("Report style",          cfg_list("styles", ["balanced", "minimal", "detailed"]),          style)
         cloud    = _ask_choice("Cloud target",          cfg_list("clouds", ["local", "aws", "gcp", "azure", "hybrid"]),   cloud)
         web      = _ask_choice("Web search mode",       cfg_list("search_modes", ["auto", "on", "off"]),                   web)
         role     = _ask_choice("Role",                  cfg_list("roles", ["DevOps", "Principal Architect", "MLOps / AIOps"]), role)
         if cfg.command == "/design" and has_existing_design:
             mode = _ask_choice("Design routing",       cfg_list("design_modes", ["smart", "fresh", "refine"]),            mode)
-        if not source_has_files:
-            print("  No code, shell, or markdown files were found in this repository.")
-            print("  Prompt is required to start from scratch.")
-            print("")
+        print("")
+        input_mode = _ask_choice("Input mode", ["vibe-now", "ask"], "vibe-now")
+        print("")
+        if input_mode == "ask":
             print("  Prompt")
-            print("  Describe the product/feature you want to design from scratch.")
-            while True:
-                entered_prompt = input("  > ").strip()
-                if entered_prompt:
-                    prompt = entered_prompt
-                    break
-                print("")
-                print("  Prompt cannot be empty for an empty source folder.")
-        else:
-            print("")
-            input_mode = _ask_choice("Input mode", ["vibe-now", "ask"], "vibe-now")
-            print("")
-            if input_mode == "ask":
-                print("  Prompt")
-                if has_existing_design:
-                    print("  Describe the feature/change request for this codebase.")
-                else:
-                    print("  Add product constraints/users/scale to guide generation.")
+            if not source_has_files:
+                print("  No code, shell, or markdown files were found in this repository.")
+                print("  Describe the product/feature you want to design from scratch.")
+            elif has_existing_design:
+                print("  Describe the feature/change request for this codebase.")
             else:
-                print("  Prompt")
-                print("  Add extra guidance; CLI still reads current codebase automatically.")
+                print("  Add product constraints/users/scale to guide generation.")
             entered_prompt = input("  > ").strip()
             if entered_prompt:
                 prompt = entered_prompt
+        else:
+            if not source_has_files:
+                print("  Empty repository detected.")
+                print("  Proceeding with vibe-now mode and no prompt.")
 
     focus = cfg.focus.strip() or prompt
-    if not source_has_files and not prompt.strip():
-        raise SystemExit("No code, shell, or markdown files found. Provide --prompt to design from scratch.")
     effective_mode = resolve_effective_mode(cfg.command, mode, has_existing_design, focus)
 
     return RunConfig(
@@ -643,7 +636,7 @@ def parse_run_args(command: str, argv: list[str] | None = None) -> RunConfig:
     g("--source", default=".", metavar="PATH",
       help="Source repository to analyze (default: .)")
     g("--out", default="", metavar="PATH",
-      help="Output root directory (default: existing ./.desflow, else ./desysflow)")
+      help="Output root directory (default: existing ./.desysflow, else ./desysflow)")
     g("--project", default="", metavar="NAME",
       help="Project name (default: source directory name)")
 
@@ -799,6 +792,12 @@ def has_meaningful_source_files(source: Path) -> bool:
 
 def infer_dominant_language(source: Path, allowed_languages: list[str]) -> str:
     allowed = {item.lower() for item in allowed_languages}
+    # Preserve caller preference order, but compare case-insensitively.
+    allowed_order: dict[str, int] = {}
+    for idx, item in enumerate(allowed_languages):
+        key = item.lower()
+        if key not in allowed_order:
+            allowed_order[key] = idx
     counts: dict[str, int] = {}
 
     for root, dirs, names in os.walk(source):
@@ -817,7 +816,7 @@ def infer_dominant_language(source: Path, allowed_languages: list[str]) -> str:
 
     ranked = sorted(
         counts.items(),
-        key=lambda item: (-item[1], allowed_languages.index(item[0])),
+        key=lambda item: (-item[1], allowed_order.get(item[0], len(allowed_order))),
     )
     return ranked[0][0]
 
@@ -2075,10 +2074,6 @@ def run(cfg: RunConfig) -> int:
     require_llm_for_terminal()
     if not cfg.source.exists() or not cfg.source.is_dir():
         raise SystemExit(f"Source path is invalid: {cfg.source}")
-    if not has_meaningful_source_files(cfg.source) and not (cfg.prompt.strip() or cfg.focus.strip()):
-        raise SystemExit(
-            "Source folder appears empty. Provide a design request via --prompt to start from scratch."
-        )
 
     # Pre-scan source for potential secret leaks and warn the user
     secret_warnings = check_source_for_secrets(cfg.source)
@@ -2403,40 +2398,25 @@ def run_wizard() -> int:
     if source_has_files and source_checkpoints.inferred_language:
         language = source_checkpoints.inferred_language
         print(f"  Checkpoint: dominant repository language detected -> {language.title()}")
-    elif source_has_files:
-        language = _ask_choice("Language", [item.title() for item in languages], languages[0].title()).lower()
-    else:
-        print(f"  Checkpoint: source repository is empty -> using default language '{language}'")
+    language = _ask_choice("Language", [item.title() for item in languages], language.title()).lower()
 
     prompt_text = ""
-    if not source_has_files:
-        print("  No code, shell, or markdown files were found in this repository.")
-        print("  Input mode fixed to: ask")
-        print("  Prompt is required to start from scratch.")
-        print("")
-        while True:
-            print("  Prompt")
-            print("  Describe the product/feature you want to design.")
-            prompt_text = input("  > ").strip()
-            if prompt_text:
-                break
-            print("")
-            print("  Prompt cannot be empty for an empty source folder.\n")
-    else:
-        prompt_mode = _ask_choice("Input mode", ["vibe-now", "ask"], "vibe-now")
-        print("")
-        if prompt_mode == "ask":
-            print("  Prompt")
-            if has_existing_design:
-                print("  Describe the feature/change request for this codebase.")
-            else:
-                print("  Describe product constraints/users/scale.")
+    prompt_mode = _ask_choice("Input mode", ["vibe-now", "ask"], "vibe-now")
+    print("")
+    if prompt_mode == "ask":
+        print("  Prompt")
+        if not source_has_files:
+            print("  No code, shell, or markdown files were found in this repository.")
+            print("  Describe the product/feature you want to design from scratch.")
+        elif has_existing_design:
+            print("  Describe the feature/change request for this codebase.")
         else:
-            print("  Prompt")
-            print("  Optional guidance to augment codebase-driven generation.")
-            print("  Leave blank to use only inferred codebase context.")
+            print("  Describe product constraints/users/scale.")
         print("")
         prompt_text = input("  > ").strip()
+    elif not source_has_files:
+        print("  Empty repository detected.")
+        print("  Proceeding with vibe-now mode and no prompt.")
 
     # ── Summary ───────────────────────────────────────────────────
     print_sep("Ready")

@@ -11,7 +11,7 @@ if [ -f ".env.example" ]; then
   set +a
 fi
 
-export DESYSFLOW_STORAGE_ROOT="${DESYSFLOW_STORAGE_ROOT:-./desysflow}"
+export DESYSFLOW_STORAGE_ROOT="${DESYSFLOW_STORAGE_ROOT:-./.desysflow}"
 export CHAT_STORE_BACKEND="${CHAT_STORE_BACKEND:-sqlite}"
 export MODEL_PROVIDER="${MODEL_PROVIDER:-ollama}"
 export OLLAMA_MODEL="${OLLAMA_MODEL:-gpt-oss:20b-cloud}"

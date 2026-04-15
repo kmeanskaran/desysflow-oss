@@ -10,7 +10,7 @@ from typing import Any, Dict
 
 from schemas.models import AgentState, ArchitectureVariant
 from services.llm import get_llm
-from utils.parser import normalize_llm_text, parse_json_response
+from utils.parser import normalize_llm_text, parse_json_block_loose
 
 logger = logging.getLogger(__name__)
 
@@ -66,13 +66,19 @@ def revision_agent(state: AgentState) -> Dict[str, Any]:
             )
             logger.debug("Revision response (attempt %d): %s", attempt, raw[:500])
 
-            revised = parse_json_response(raw, ArchitectureVariant)
+            parsed = parse_json_block_loose(raw)
+            if not isinstance(parsed, dict):
+                raise ValueError(f"Expected JSON object from revision agent, got {type(parsed).__name__}")
+            revised = ArchitectureVariant.model_validate(parsed)
             logger.info("Architecture revised successfully on attempt %d", attempt)
             return {"revised_architecture": revised.model_dump()}
 
         except Exception as exc:
             last_error = exc
-            logger.warning("Revision failed on attempt %d: %s", attempt, exc)
+            if attempt < max_attempts:
+                logger.info("Revision: retrying with stricter JSON request")
+            else:
+                logger.warning("Revision failed on final attempt: %s", exc)
             messages.append({"role": "assistant", "content": raw if "raw" in dir() else ""})
             messages.append({
                 "role": "user",
@@ -83,7 +89,7 @@ def revision_agent(state: AgentState) -> Dict[str, Any]:
             })
 
     # Fallback: return original architecture with a note
-    logger.error("Revision failed after %d attempts: %s", max_attempts, last_error)
+    logger.warning("Revision fallback applied after %d attempts", max_attempts)
     fallback = dict(base_architecture)
     fallback.setdefault("bottlenecks", []).append("Revision failed — manual review needed")
     return {"revised_architecture": fallback}

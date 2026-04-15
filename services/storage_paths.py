@@ -10,6 +10,9 @@ def get_storage_root() -> Path:
     """Return the local storage root and ensure it exists."""
     raw_root = os.getenv("DESYSFLOW_STORAGE_ROOT", "./desysflow").strip() or "./desysflow"
     root = Path(raw_root).expanduser()
+    # Backward-compat: transparently migrate legacy hidden root naming.
+    if root.name == ".desflow":
+        root = root.with_name(".desysflow")
     root.mkdir(parents=True, exist_ok=True)
     return root
 

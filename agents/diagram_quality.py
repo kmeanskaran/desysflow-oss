@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Tuple
 
 from schemas.models import AgentState
 from services.llm import get_llm
-from utils.parser import extract_json_block, normalize_llm_text
+from utils.parser import normalize_llm_text, parse_json_block_loose
 
 logger = logging.getLogger(__name__)
 
@@ -187,7 +187,9 @@ def diagram_quality_agent(state: AgentState) -> Dict[str, Any]:
         raw = normalize_llm_text(
             response.content if hasattr(response, "content") else response
         )
-        data = json.loads(extract_json_block(raw))
+        data = parse_json_block_loose(raw)
+        if not isinstance(data, dict):
+            raise ValueError(f"Expected JSON object from diagram agent, got {type(data).__name__}")
 
         mermaid = _sanitise_mermaid(str(data.get("mermaid_code", "")))
         excalidraw_diagram = data.get("excalidraw_diagram", {})
@@ -214,7 +216,7 @@ def diagram_quality_agent(state: AgentState) -> Dict[str, Any]:
             "diagram_quality_checks": [f"Applied style: {style}", *[str(x) for x in quality_checks]][:8],
         }
     except Exception as exc:
-        logger.error("Diagram quality agent failed: %s", exc)
+        logger.warning("Diagram quality fallback used")
         mermaid, spec, checks = _fallback_from_architecture(revised)
         checks.append(f"Quality agent fallback reason: {exc}")
         return {

@@ -2,6 +2,7 @@
 
 set -euo pipefail
 
+INVOKE_CWD="$(pwd)"
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT_DIR"
 
@@ -88,9 +89,9 @@ run_cli_loop() {
   run_design() {
     local design_prompt="${1:-}"
     if [ -n "$design_prompt" ]; then
-      uv run desysflow design --prompt "$design_prompt"
+      uv run desysflow design --source "$INVOKE_CWD" --prompt "$design_prompt"
     else
-      uv run desysflow design
+      uv run desysflow design --source "$INVOKE_CWD"
     fi
   }
 
