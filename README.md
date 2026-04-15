@@ -91,8 +91,8 @@ Interactive prompt commands:
 Run directly with flags:
 
 ```bash
-desysflow design --source . --out ./desysflow --project my-project
-desysflow redesign --source . --out ./desysflow --project my-project --focus "improve scaling"
+desysflow design --source . --out ./.desysflow --project my-project
+desysflow redesign --source . --out ./.desysflow --project my-project --focus "improve scaling"
 ```
 
 Run without prompts:
@@ -100,7 +100,7 @@ Run without prompts:
 ```bash
 desysflow design \
   --source . \
-  --out ./desysflow \
+  --out ./.desysflow \
   --project my-project \
   --model-provider ollama \
   --model gpt-oss:20b-cloud \
@@ -113,6 +113,7 @@ desysflow design \
 Interactive defaults:
 - Empty repositories skip the `Input mode` chooser and immediately ask what you want to design.
 - Non-empty repositories detect the dominant codebase language and use it as the default language selection.
+- Generated artifacts and local session data are stored in `./.desysflow` by default.
 
 ## UI Usage
 
@@ -169,7 +170,7 @@ See [Agentic Architecture](docs/agentic-architecture.md) for more detail.
 
 ## Output Structure
 
-DesysFlow writes versioned artifacts to `./desysflow/<project>/vN/` including:
+DesysFlow writes versioned artifacts to `./.desysflow/<project>/vN/` by default, including:
 - `HLD.md`
 - `LLD.md`
 - `TECHNICAL_REPORT.md`

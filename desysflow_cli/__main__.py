@@ -75,7 +75,7 @@ def default_project_name(source: Path) -> str:
 
 
 def default_output_root(base: Path | None = None) -> Path:
-    """Prefer an existing hidden output root, otherwise use the documented default."""
+    """Use a hidden local storage root in the current workspace by default."""
     configured = os.getenv("DESYSFLOW_STORAGE_ROOT", "").strip()
     if configured:
         configured_path = Path(configured).expanduser()
@@ -90,7 +90,7 @@ def default_output_root(base: Path | None = None) -> Path:
         return hidden
     if legacy_hidden.exists():
         return hidden
-    return root / "desysflow"
+    return hidden
 
 SKIP_DIRS = {
     ".git",
@@ -653,7 +653,7 @@ def parse_run_args(command: str, argv: list[str] | None = None) -> RunConfig:
     g("--source", default=".", metavar="PATH",
       help="Source repository to analyze (default: .)")
     g("--out", default="", metavar="PATH",
-      help="Output root directory (default: existing ./.desysflow, else ./desysflow)")
+      help="Output root directory (default: ./.desysflow in the current working directory)")
     g("--project", default="", metavar="NAME",
       help="Project name (default: source directory name)")
 
@@ -1364,8 +1364,8 @@ def render_lld(cfg: RunConfig, ctx: AnalysisContext) -> str:
     return f"""# LLD
 
 ## APIs
-- `desysflow /design --source . --out ./desysflow`
-- `desysflow /design --source . --out ./desysflow --focus "<goal>"` to refine from latest
+- `desysflow /design --source . --out ./.desysflow`
+- `desysflow /design --source . --out ./.desysflow --focus "<goal>"` to refine from latest
 - `desysflow /redesign ...` remains as a compatibility alias for explicit refine runs
 
 ## Schemas
@@ -1453,7 +1453,7 @@ This versioned design package was generated from repository inspection using an 
 - Refine runs write a fresh versioned package rather than appending fragmented outputs.
 
 ## Session Management and Memory
-- Run history is stored in `desysflow/.desysflow_cli.db`.
+- Run history is stored in `.desysflow/.desysflow_cli.db`.
 - No external product-memory layer is required.
 
 ## Web Search Strategy
@@ -1576,7 +1576,7 @@ def render_non_technical_doc(cfg: RunConfig, ctx: AnalysisContext, version: str)
     core_users = ", ".join(["founders", "product leads", "engineering managers", "developers"])
     key_capabilities = [
         "Turns a source tree or prompt into a versioned design package",
-        "Keeps sessions, chat history, and artifacts local under ./desysflow",
+        "Keeps sessions, chat history, and artifacts local under ./.desysflow",
         "Supports iterative refinement without losing earlier versions",
         "Produces outputs usable by both technical and non-technical stakeholders",
     ]

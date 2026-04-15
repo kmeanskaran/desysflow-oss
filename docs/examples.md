@@ -11,7 +11,7 @@ Then keep working from the `letsvibe>` prompt with `run`, `design <prompt>`, `re
 Or run the command directly:
 
 ```bash
-desysflow design --source . --out ./desysflow --project ecommerce-system
+desysflow design --source . --out ./.desysflow --project ecommerce-system
 ```
 
 ## Focused Refinement
@@ -19,7 +19,7 @@ desysflow design --source . --out ./desysflow --project ecommerce-system
 ```bash
 desysflow redesign \
   --source . \
-  --out ./desysflow \
+  --out ./.desysflow \
   --project ecommerce-system \
   --focus "optimize checkout scalability and caching"
 ```
@@ -35,7 +35,7 @@ letsvibedesign dev
 ```bash
 desysflow design \
   --source . \
-  --out ./desysflow \
+  --out ./.desysflow \
   --project ecommerce-system \
   --model-provider ollama \
   --model gpt-oss:20b-cloud \

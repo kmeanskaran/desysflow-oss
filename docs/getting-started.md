@@ -73,8 +73,8 @@ The launcher stays open after each run and accepts:
 Direct:
 
 ```bash
-desysflow design --source . --out ./desysflow --project my-project
-desysflow redesign --source . --out ./desysflow --project my-project --focus "improve reliability"
+desysflow design --source . --out ./.desysflow --project my-project
+desysflow redesign --source . --out ./.desysflow --project my-project --focus "improve reliability"
 ```
 
 ## 5. Basic UI Usage

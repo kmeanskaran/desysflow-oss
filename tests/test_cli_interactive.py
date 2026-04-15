@@ -6,6 +6,7 @@ from desysflow_cli.__main__ import (
     _collect_prompt_text,
     _resolve_ollama_model_selection,
     collect_source_checkpoints,
+    default_output_root,
     has_meaningful_source_files,
     infer_dominant_language,
 )
@@ -90,3 +91,7 @@ def test_collect_prompt_text_non_empty_repo_keeps_vibe_now_default(monkeypatch) 
 
     assert mode == "vibe-now"
     assert prompt == ""
+
+
+def test_default_output_root_uses_hidden_dir_for_new_workspace(tmp_path: Path) -> None:
+    assert default_output_root(tmp_path) == tmp_path / ".desysflow"

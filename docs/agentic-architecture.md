@@ -41,7 +41,7 @@ The API wraps the base graph with product workflows used by the UI:
 
 ## Persistence
 
-Generated CLI artifacts are written under `./desysflow/<project>/vN/`.
+Generated CLI artifacts are written under `./.desysflow/<project>/vN/` by default.
 
 The UI/API stores conversation state locally through the conversation/session stores so users can reopen previous UI sessions.
 

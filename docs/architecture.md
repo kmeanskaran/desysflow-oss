@@ -54,7 +54,7 @@ For the agent-by-agent view, see [Agentic Architecture](agentic-architecture.md)
 
 ## Data Storage
 
-Default local storage under `./desysflow`:
+Default local storage under `./.desysflow`:
 - versioned design artifacts
 - CLI/session databases (SQLite)
 - UI conversation records
