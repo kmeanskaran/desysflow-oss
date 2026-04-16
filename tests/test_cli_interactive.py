@@ -9,6 +9,8 @@ from desysflow_cli.__main__ import (
     default_output_root,
     has_meaningful_source_files,
     infer_dominant_language,
+    resolve_effective_mode,
+    resolve_latest_design_baseline,
 )
 
 
@@ -67,6 +69,45 @@ def test_collect_source_checkpoints_empty_repo_has_no_inferred_language(tmp_path
 
     assert checkpoints.has_meaningful_files is False
     assert checkpoints.inferred_language == ""
+    assert checkpoints.has_existing_design is False
+    assert checkpoints.latest_design_version == ""
+
+
+def test_collect_source_checkpoints_detects_latest_desysflow_baseline(tmp_path: Path) -> None:
+    source = tmp_path / "repo"
+    source.mkdir()
+    output_root = source / ".desysflow"
+    latest = output_root / "repo" / "v2"
+    latest.mkdir(parents=True)
+    (latest / "SUMMARY.md").write_text("# Summary\n\ncurrent design", encoding="utf-8")
+    (output_root / "repo" / "latest").write_text("v2\n", encoding="utf-8")
+
+    checkpoints = collect_source_checkpoints(
+        source,
+        ["python", "typescript", "go", "java", "rust"],
+        output_root=output_root,
+        project="repo",
+    )
+
+    assert checkpoints.has_existing_design is True
+    assert checkpoints.latest_design_version == "v2"
+
+
+def test_resolve_latest_design_baseline_reads_latest_pointer(tmp_path: Path) -> None:
+    output_root = tmp_path / ".desysflow"
+    latest = output_root / "repo" / "v3"
+    latest.mkdir(parents=True)
+    (latest / "SUMMARY.md").write_text("# Summary\n\nBaseline summary", encoding="utf-8")
+    (latest / "HLD.md").write_text("# HLD\n\nBaseline HLD", encoding="utf-8")
+    (output_root / "repo" / "latest").write_text("v3\n", encoding="utf-8")
+
+    baseline = resolve_latest_design_baseline(output_root, "repo")
+
+    assert baseline is not None
+    assert baseline.version == "v3"
+    assert baseline.path == latest
+    assert "SUMMARY.md" in baseline.files
+    assert "Baseline summary" in baseline.excerpts["SUMMARY.md"]
 
 
 def test_collect_prompt_text_empty_repo_skips_input_mode_and_requests_prompt(monkeypatch) -> None:
@@ -85,12 +126,33 @@ def test_collect_prompt_text_non_empty_repo_keeps_vibe_now_default(monkeypatch) 
 
     prompt, mode = _collect_prompt_text(
         source_has_files=True,
-        has_existing_design=False,
+        has_existing_design=True,
+        latest_design_version="v4",
         prompt="",
     )
 
     assert mode == "vibe-now"
     assert prompt == ""
+
+
+def test_collect_prompt_text_repo_without_baseline_forces_ask(monkeypatch) -> None:
+    responses = iter(["design around the current codebase"])
+    monkeypatch.setattr("builtins.input", lambda _prompt="": next(responses))
+
+    prompt, mode = _collect_prompt_text(
+        source_has_files=True,
+        has_existing_design=False,
+        prompt="",
+    )
+
+    assert mode == "ask"
+    assert prompt == "design around the current codebase"
+
+
+def test_resolve_effective_mode_smart_uses_refine_when_baseline_exists() -> None:
+    mode = resolve_effective_mode("/design", "smart", True, "")
+
+    assert mode == "refine"
 
 
 def test_default_output_root_uses_hidden_dir_for_new_workspace(tmp_path: Path) -> None:

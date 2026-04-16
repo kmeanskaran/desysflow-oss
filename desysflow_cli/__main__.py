@@ -181,6 +181,14 @@ SECRET_PATTERNS = [
 ]
 TOP_FILE_LIMIT = 60
 REVIEW_LOOP_LIMIT = 2
+BASELINE_CONTEXT_FILES = [
+    "SUMMARY.md",
+    "HLD.md",
+    "LLD.md",
+    "TECHNICAL_REPORT.md",
+    "NON_TECHNICAL_DOC.md",
+]
+BASELINE_EXCERPT_LIMIT = 900
 
 LOG_EMOJI = {
     "run": "🚀",
@@ -197,6 +205,13 @@ LOG_EMOJI = {
 def log_line(kind: str, message: str) -> None:
     emoji = LOG_EMOJI.get(kind, "•")
     print(f"{emoji} [{kind}] {message}")
+
+
+def _truncate_for_prompt(text: str, limit: int = BASELINE_EXCERPT_LIMIT) -> str:
+    compact = text.strip()
+    if len(compact) <= limit:
+        return compact
+    return compact[:limit].rstrip() + "..."
 
 
 HLD_REQUIRED_SECTIONS = [
@@ -264,6 +279,7 @@ class AnalysisContext:
     key_paths: list[str]
     web_enabled: bool
     references: list[dict[str, str]]
+    latest_design: DesignBaseline | None
 
 
 @dataclass
@@ -284,6 +300,16 @@ class HistoryConfig:
 class SourceCheckpoints:
     has_meaningful_files: bool
     inferred_language: str
+    has_existing_design: bool
+    latest_design_version: str
+
+
+@dataclass
+class DesignBaseline:
+    version: str
+    path: Path
+    files: list[str]
+    excerpts: dict[str, str]
 
 
 # ----------------------------------------------------------------------
@@ -487,14 +513,15 @@ def finalize_options(cfg: RunConfig) -> RunConfig:
         print(f"  API key  : {'[set]' if cfg.api_key else '[none]'}")
         print("")
 
-    project_root = cfg.output_root / cfg.project
-    has_existing_design = any(
-        child.is_dir() and child.name.startswith("v")
-        for child in project_root.iterdir()
-    ) if project_root.exists() else False
     language_choices = cfg_list("languages", ["python", "typescript", "go", "java", "rust"])
-    source_checkpoints = collect_source_checkpoints(cfg.source, language_choices)
+    source_checkpoints = collect_source_checkpoints(
+        cfg.source,
+        language_choices,
+        output_root=cfg.output_root,
+        project=cfg.project,
+    )
     source_has_files = source_checkpoints.has_meaningful_files
+    has_existing_design = source_checkpoints.has_existing_design
 
     defaults = cfg_defaults()
     language = cfg.language or os.getenv("DESYSFLOW_LANGUAGE", "").strip() or defaults.get("language", "python")
@@ -520,6 +547,7 @@ def finalize_options(cfg: RunConfig) -> RunConfig:
         prompt, _ = _collect_prompt_text(
             source_has_files=source_has_files,
             has_existing_design=has_existing_design,
+            latest_design_version=source_checkpoints.latest_design_version,
             prompt=prompt,
         )
 
@@ -585,30 +613,34 @@ def _collect_prompt_text(
     *,
     source_has_files: bool,
     has_existing_design: bool,
+    latest_design_version: str = "",
     prompt: str = "",
 ) -> tuple[str, str]:
     prompt_text = prompt.strip()
+
+    if has_existing_design:
+        label = latest_design_version or "latest"
+        print(f"  Found existing .desysflow baseline ({label}).")
+        input_mode = _ask_choice("Input mode", ["vibe-now", "ask"], "vibe-now")
+        print("")
+        if input_mode == "ask":
+            print("  Prompt")
+            print("  Describe the feature/change request for this codebase.")
+            entered_prompt = input("  > ").strip()
+            if entered_prompt:
+                prompt_text = entered_prompt
+        return prompt_text, input_mode
 
     if not source_has_files:
         print("  Prompt")
         print("  No code, shell, or markdown files were found in this repository.")
         print("  Describe the product/feature you want to design from scratch.")
-        entered_prompt = input("  > ").strip()
-        return (entered_prompt or prompt_text), "ask"
-
-    input_mode = _ask_choice("Input mode", ["vibe-now", "ask"], "vibe-now")
-    print("")
-    if input_mode == "ask":
+    else:
         print("  Prompt")
-        if has_existing_design:
-            print("  Describe the feature/change request for this codebase.")
-        else:
-            print("  Add product constraints/users/scale to guide generation.")
-        entered_prompt = input("  > ").strip()
-        if entered_prompt:
-            prompt_text = entered_prompt
-
-    return prompt_text, input_mode
+        print("  No existing .desysflow baseline was found for this repository.")
+        print("  Describe what you want the CLI to design or change.")
+    entered_prompt = input("  > ").strip()
+    return (entered_prompt or prompt_text), "ask"
 
 
 def print_main_help() -> None:
@@ -838,10 +870,74 @@ def infer_dominant_language(source: Path, allowed_languages: list[str]) -> str:
     return ranked[0][0]
 
 
-def collect_source_checkpoints(source: Path, allowed_languages: list[str]) -> SourceCheckpoints:
+def resolve_latest_design_baseline(output_root: Path, project: str) -> DesignBaseline | None:
+    project_root = output_root / project
+    if not project_root.exists():
+        return None
+
+    latest_version = ""
+    latest_path: Path | None = None
+    latest_file = project_root / "latest"
+    if latest_file.exists():
+        latest_version = latest_file.read_text(encoding="utf-8", errors="ignore").strip()
+        if latest_version:
+            candidate = project_root / latest_version
+            if candidate.exists() and candidate.is_dir():
+                latest_path = candidate
+
+    if latest_path is None:
+        versions: list[tuple[int, Path]] = []
+        for child in project_root.iterdir():
+            if not child.is_dir() or not child.name.startswith("v"):
+                continue
+            try:
+                versions.append((int(child.name[1:]), child))
+            except ValueError:
+                continue
+        if versions:
+            versions.sort()
+            latest_number, latest_path = versions[-1]
+            latest_version = f"v{latest_number}"
+
+    if latest_path is None:
+        return None
+
+    excerpts: dict[str, str] = {}
+    files: list[str] = []
+    for name in BASELINE_CONTEXT_FILES:
+        path = latest_path / name
+        if not path.exists() or not path.is_file():
+            continue
+        content = read_text_or_empty(path)
+        if not content.strip():
+            continue
+        files.append(name)
+        excerpts[name] = _truncate_for_prompt(content)
+
+    return DesignBaseline(
+        version=latest_version or latest_path.name,
+        path=latest_path,
+        files=files,
+        excerpts=excerpts,
+    )
+
+
+def collect_source_checkpoints(
+    source: Path,
+    allowed_languages: list[str],
+    *,
+    output_root: Path | None = None,
+    project: str = "",
+) -> SourceCheckpoints:
     has_files = has_meaningful_source_files(source)
     inferred_language = infer_dominant_language(source, allowed_languages) if has_files else ""
-    return SourceCheckpoints(has_meaningful_files=has_files, inferred_language=inferred_language)
+    baseline = resolve_latest_design_baseline(output_root, project) if output_root and project else None
+    return SourceCheckpoints(
+        has_meaningful_files=has_files,
+        inferred_language=inferred_language,
+        has_existing_design=baseline is not None,
+        latest_design_version=baseline.version if baseline else "",
+    )
 
 
 def resolve_effective_mode(command: str, mode: str, has_existing_design: bool, focus: str) -> str:
@@ -851,7 +947,7 @@ def resolve_effective_mode(command: str, mode: str, has_existing_design: bool, f
         return "fresh"
     if mode == "refine":
         return "refine" if has_existing_design else "fresh"
-    if has_existing_design and focus.strip():
+    if has_existing_design:
         return "refine"
     return "fresh"
 
@@ -1228,12 +1324,13 @@ def build_analysis_context(cfg: RunConfig) -> AnalysisContext:
     web_enabled = should_enable_web_search(cfg.web_search, intent_text, cfg.focus, cfg.cloud)
     search_query = f"{cfg.project} {intent_text} {cfg.cloud}".strip()
 
-    with ThreadPoolExecutor(max_workers=5) as executor:
+    with ThreadPoolExecutor(max_workers=6) as executor:
         inventory_future = executor.submit(source_inventory, cfg.source)
         stack_future = executor.submit(detect_stack, cfg.source)
         module_future = executor.submit(map_modules, cfg.source)
         paths_future = executor.submit(identify_key_paths, cfg.source)
         refs_future = executor.submit(best_effort_search, search_query, web_enabled, 5)
+        baseline_future = executor.submit(resolve_latest_design_baseline, cfg.output_root, cfg.project)
 
     return AnalysisContext(
         inventory=inventory_future.result(),
@@ -1242,6 +1339,7 @@ def build_analysis_context(cfg: RunConfig) -> AnalysisContext:
         key_paths=paths_future.result(),
         web_enabled=web_enabled,
         references=refs_future.result(),
+        latest_design=baseline_future.result(),
     )
 
 
@@ -1292,6 +1390,16 @@ def build_user_request(cfg: RunConfig, ctx: AnalysisContext) -> str:
             "Design request: Create a production-grade architecture for the current codebase, "
             "including API boundaries, data flow, scaling, availability, and security."
         )
+    if ctx.latest_design:
+        base.append(
+            f"Existing .desysflow baseline: version {ctx.latest_design.version} at {ctx.latest_design.path}"
+        )
+        baseline_files = ", ".join(ctx.latest_design.files) if ctx.latest_design.files else "no readable baseline docs"
+        base.append(f"Baseline files loaded: {baseline_files}")
+        for name in ["SUMMARY.md", "HLD.md", "LLD.md", "TECHNICAL_REPORT.md"]:
+            excerpt = ctx.latest_design.excerpts.get(name, "").strip()
+            if excerpt:
+                base.append(f"Baseline excerpt from {name}:\n{excerpt}")
     return "\n".join(base)
 
 
@@ -2382,8 +2490,15 @@ def run_wizard() -> int:
 
     # ── Source checkpoints ───────────────────────────────────────
     source_path = Path.cwd()
+    project = default_project_name(source_path)
+    output_root = default_output_root()
     languages = cfg_list("languages", ["python", "typescript", "go", "java", "rust"])
-    source_checkpoints = collect_source_checkpoints(source_path, languages)
+    source_checkpoints = collect_source_checkpoints(
+        source_path,
+        languages,
+        output_root=output_root,
+        project=project,
+    )
     source_has_files = source_checkpoints.has_meaningful_files
 
     # ── Design preferences ───────────────────────────────────────
@@ -2404,22 +2519,22 @@ def run_wizard() -> int:
 
     # ── Prompt / focus ───────────────────────────────────────────
     print_sep("Your design request")
-    project = default_project_name(source_path)
-    output_root = default_output_root()
-    project_root = output_root / project
-    has_existing_design = any(
-        child.is_dir() and child.name.startswith("v")
-        for child in project_root.iterdir()
-    ) if project_root.exists() else False
+    has_existing_design = source_checkpoints.has_existing_design
     language = languages[0]
     if source_has_files and source_checkpoints.inferred_language:
         language = source_checkpoints.inferred_language
         print(f"  Checkpoint: dominant repository language detected -> {language.title()}")
+    if has_existing_design:
+        print(
+            "  Checkpoint: existing .desysflow baseline detected"
+            f" -> {source_checkpoints.latest_design_version}"
+        )
     language = _ask_choice("Language", [item.title() for item in languages], language.title()).lower()
 
     prompt_text, prompt_mode = _collect_prompt_text(
         source_has_files=source_has_files,
         has_existing_design=has_existing_design,
+        latest_design_version=source_checkpoints.latest_design_version,
     )
 
     # ── Summary ───────────────────────────────────────────────────
