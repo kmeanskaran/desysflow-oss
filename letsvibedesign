@@ -49,6 +49,20 @@ source_env() {
   fi
 }
 
+normalize_storage_root() {
+  local raw="${DESYSFLOW_STORAGE_ROOT:-}"
+  if [ -z "$raw" ]; then
+    export DESYSFLOW_STORAGE_ROOT="$INVOKE_CWD/.desysflow"
+    return
+  fi
+  case "$raw" in
+    /*|~*) ;;
+    *)
+      export DESYSFLOW_STORAGE_ROOT="$INVOKE_CWD/$raw"
+      ;;
+  esac
+}
+
 run_mode() {
   local mode="$1"
   case "$mode" in
@@ -58,6 +72,7 @@ run_mode() {
     dev)
       ensure_bootstrap
       source_env
+      normalize_storage_root
       exec ./scripts/dev.sh
       ;;
     help|-h|--help)
@@ -74,11 +89,13 @@ run_mode() {
 run_cli_loop() {
   ensure_bootstrap
   source_env
+  normalize_storage_root
 
   echo "Starting CLI design flow."
   echo "After each run:"
   echo "  - design <prompt> to run with a prompt"
   echo "  - design to enter a prompt interactively"
+  echo "  - ls / pwd to inspect your invoke directory"
   echo "  - restart to pick mode again"
   echo "  - bye to exit"
 
@@ -124,6 +141,14 @@ run_cli_loop() {
         next_prompt="${choice#design }"
         should_run=1
         ;;
+      ls)
+        ls -la "$INVOKE_CWD"
+        should_run=0
+        ;;
+      pwd)
+        printf '%s\n' "$INVOKE_CWD"
+        should_run=0
+        ;;
       bye|exit|quit)
         echo "Bye."
         break
@@ -142,6 +167,8 @@ run_cli_loop() {
         echo "  [Enter|run]       run design again"
         echo "  design            ask for prompt, then run"
         echo "  design <prompt>   run with prompt"
+        echo "  ls                list files in the invoke directory"
+        echo "  pwd               show invoke directory path"
         echo "  restart           show mode picker"
         echo "  bye               exit"
         should_run=0
