@@ -93,7 +93,19 @@ def _normalize_hld_report(report: Any) -> dict:
     if _non_empty_str(data.get("system_overview")):
         normalized["system_overview"] = data["system_overview"].strip()
     if _non_empty_list(data.get("components")):
-        normalized["components"] = data["components"]
+        cleaned_components = []
+        for item in data["components"]:
+            if isinstance(item, dict):
+                name = str(item.get("name", "")).strip() or "Unnamed Component"
+                responsibility = str(item.get("responsibility", "")).strip() or "Responsibility not specified."
+                comp_type = str(item.get("type", "")).strip().lower() or "service"
+                cleaned_components.append({"name": name, "responsibility": responsibility, "type": comp_type})
+            elif isinstance(item, str) and item.strip():
+                cleaned_components.append(
+                    {"name": item.strip(), "responsibility": "Supports core platform capabilities.", "type": "service"}
+                )
+        if cleaned_components:
+            normalized["components"] = cleaned_components
     if _non_empty_list(data.get("data_flow")):
         normalized["data_flow"] = data["data_flow"]
     if _non_empty_str(data.get("scaling_strategy")):
@@ -139,6 +151,9 @@ Output constraints (important):
 - Keep total response under ~2500 tokens
 - Keep each string concise (prefer <= 220 chars)
 - Keep lists practical (prefer <= 12 items)
+- Components must be concrete deployable/logical units (no vague entries like "System" or "Infrastructure").
+- Every component must include all three keys: name, responsibility, type.
+- Components should be implementation-ready and operationally meaningful for production use.
 
 Respond with ONLY the JSON object — no explanation, no markdown."""
 
@@ -166,6 +181,7 @@ Output constraints (important):
   - service_communication <= 20
   - caching_strategy <= 8
   - error_handling <= 12
+- Use implementation-level details: auth boundaries, validation, idempotency, retry/backoff, and failure handling where relevant.
 
 Respond with ONLY the JSON object — no explanation, no markdown."""
 

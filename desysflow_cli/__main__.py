@@ -1424,11 +1424,89 @@ def _bullet_list(items: list[Any], fallback: str = "- Not specified.") -> str:
     return "\n".join(f"- {_pretty(item)}" for item in items)
 
 
+def _safe_text(value: Any, fallback: str = "Not specified.") -> str:
+    if isinstance(value, str):
+        compact = " ".join(value.split()).strip()
+        return compact if compact else fallback
+    if value is None:
+        return fallback
+    return str(value)
+
+
+def _infer_component_type(name: str, responsibility: str) -> str:
+    text = f"{name} {responsibility}".lower()
+    if any(token in text for token in ["gateway", "ingress", "edge"]):
+        return "gateway"
+    if any(token in text for token in ["postgres", "mysql", "mongodb", "database", "store", "warehouse"]):
+        return "database"
+    if any(token in text for token in ["redis", "cache", "memcached"]):
+        return "cache"
+    if any(token in text for token in ["queue", "kafka", "pubsub", "sqs", "stream"]):
+        return "queue"
+    if any(token in text for token in ["s3", "gcs", "blob", "object storage", "storage"]):
+        return "storage"
+    if any(token in text for token in ["cdn", "edge cache"]):
+        return "cdn"
+    if any(token in text for token in ["monitor", "alert", "observability", "metrics", "logging", "tracing"]):
+        return "monitoring"
+    return "service"
+
+
+def _format_component_bullets(components: list[Any], fallback: list[dict[str, str]] | None = None) -> str:
+    normalized: list[dict[str, str]] = []
+    for item in components:
+        if isinstance(item, dict):
+            name = _safe_text(item.get("name"), "Unnamed Component")
+            responsibility = _safe_text(item.get("responsibility"), "Responsibility not specified.")
+            comp_type = _safe_text(item.get("type"), _infer_component_type(name, responsibility)).lower()
+        else:
+            name = _safe_text(item, "Unnamed Component")
+            responsibility = "Supports core platform capabilities."
+            comp_type = _infer_component_type(name, responsibility)
+        normalized.append({"name": name, "responsibility": responsibility, "type": comp_type})
+
+    if not normalized and fallback:
+        normalized = fallback
+    if not normalized:
+        normalized = [
+            {
+                "name": "Core Service",
+                "responsibility": "Coordinate request processing and downstream calls",
+                "type": "service",
+            }
+        ]
+
+    blocks = []
+    for obj in normalized:
+        lines = json.dumps(obj, indent=2).splitlines()
+        if not lines:
+            continue
+        blocks.append("- " + lines[0])
+        blocks.extend(f"  {line}" for line in lines[1:])
+    return "\n".join(blocks)
+
+
+def _format_api_endpoint_line(item: Any) -> str:
+    if not isinstance(item, dict):
+        return _safe_text(item)
+    method = _safe_text(item.get("method"), "METHOD").upper()
+    path = _safe_text(item.get("path"), "/")
+    description = _safe_text(item.get("description"), "No description.")
+    request_body = _safe_text(item.get("request_body"), "{}")
+    response_body = _safe_text(item.get("response_body"), "{}")
+    return f"`{method} {path}` - {description} | request={request_body} | response={response_body}"
+
+
 def render_hld(cfg: RunConfig, version: str, ctx: AnalysisContext) -> str:
     style_hint = style_notes(cfg.style)
-    module_lines = "\n".join(
-        f"- `{name}`: {description}" for name, description in ctx.module_map.items()
-    ) or "- No core module folders detected."
+    module_components = [
+        {
+            "name": _safe_text(name, "Core Module"),
+            "responsibility": _safe_text(description, "Core system responsibility."),
+            "type": _infer_component_type(_safe_text(name), _safe_text(description)),
+        }
+        for name, description in ctx.module_map.items()
+    ]
     cloud_text = (
         f"- Target cloud profile: `{cfg.cloud}`\n- Prefer managed building blocks where portability does not materially suffer."
         if cfg.cloud != "local"
@@ -1447,7 +1525,7 @@ def render_hld(cfg: RunConfig, version: str, ctx: AnalysisContext) -> str:
 This high-level design is generated from the current source tree. {style_hint["detail"]}
 
 ## Components
-{module_lines}
+{_format_component_bullets(module_components)}
 
 ## Data Flow
 1. The local CLI accepts `/design` inputs and routes fresh vs refine behavior smartly.
@@ -1480,6 +1558,10 @@ def render_lld(cfg: RunConfig, ctx: AnalysisContext) -> str:
     key_paths = "\n".join(f"- `{item}`" for item in ctx.key_paths) or "- No representative paths detected."
     return f"""# LLD
 
+## Implementation Scope
+- Convert architecture decisions into implementation tasks, contracts, and deployment controls.
+- Keep operational behavior explicit: retries, timeouts, observability, and rollback paths.
+
 ## APIs
 - `desysflow /design --source . --out ./.desysflow`
 - `desysflow /design --source . --out ./.desysflow --focus "<goal>"` to refine from latest
@@ -1502,6 +1584,7 @@ def render_lld(cfg: RunConfig, ctx: AnalysisContext) -> str:
 - `/redesign` falls back to fresh generation when no prior version exists.
 - Web search runs on a best-effort basis and never blocks generation.
 - Reviewer-loop failures degrade to the latest valid draft rather than aborting the run.
+- Fail-safe behavior prioritizes valid artifact output over partial pipeline failure.
 
 ## Deployment
 - Local execution target: Python 3.11+.
@@ -1513,6 +1596,7 @@ def render_lld(cfg: RunConfig, ctx: AnalysisContext) -> str:
 ## Security
 - The generator reads local source files and writes Markdown, Mermaid, and JSON artifacts only.
 - Secrets are not intentionally extracted or copied into generated docs.
+- Access scope remains local-first; no hosted control plane is required for core workflows.
 
 ## Test Plan
 - {style_hint["test_depth"]}
@@ -1751,11 +1835,36 @@ def render_hld_from_workflow(cfg: RunConfig, version: str, result: dict[str, Any
     data_flow = hld.get("data_flow", []) if isinstance(hld.get("data_flow"), list) else []
     trade_offs = hld.get("trade_offs", []) if isinstance(hld.get("trade_offs"), list) else []
     capacity = hld.get("estimated_capacity", {}) if isinstance(hld.get("estimated_capacity"), dict) else {}
+    fallback_components = [
+        {"name": "API Gateway", "responsibility": "Route and rate-limit client requests", "type": "gateway"},
+        {"name": "Auth Service", "responsibility": "Validate OAuth2 tokens and enforce IAM policies", "type": "service"},
+        {"name": "Feature Store", "responsibility": "Persist and query training features", "type": "database"},
+        {"name": "Training Orchestrator", "responsibility": "Trigger Vertex AI pipelines", "type": "service"},
+        {"name": "Training Scheduler", "responsibility": "Schedule periodic training jobs", "type": "service"},
+        {"name": "Model Serving Cluster", "responsibility": "Serve models with low latency", "type": "service"},
+        {"name": "Batch Inference Engine", "responsibility": "Process bulk inference requests", "type": "service"},
+        {"name": "Experiment Tracker", "responsibility": "Track experiments and metrics", "type": "service"},
+        {"name": "CLI Service", "responsibility": "Expose CLI commands via Cloud Functions", "type": "service"},
+        {"name": "Logging Service", "responsibility": "Collect logs to Cloud Logging", "type": "service"},
+        {
+            "name": "Monitoring & Alerting Service",
+            "responsibility": "Aggregate metrics and trigger alerts",
+            "type": "monitoring",
+        },
+        {"name": "Secrets Manager", "responsibility": "Store DB credentials and API keys", "type": "service"},
+    ]
     assumptions = [
         "Current prompt and repository context represent the primary product scope.",
         "Non-functional targets are derived from extracted requirements when explicit values are missing.",
         "Cloud and runtime choices can be evolved in follow-up design iterations.",
     ]
+    data_flow_lines = _bullet_list(data_flow, fallback="- Request and processing flow not specified.")
+    if data_flow:
+        data_flow_lines = _bullet_list([f"Step {idx + 1}: {_safe_text(step)}" for idx, step in enumerate(data_flow)])
+    capacity_lines = _bullet_list(
+        [f"{_safe_text(k)}: {_safe_text(v)}" for k, v in capacity.items()],
+        fallback="- Not specified.",
+    )
     return f"""# HLD
 
 ## Overview
@@ -1775,14 +1884,16 @@ def render_hld_from_workflow(cfg: RunConfig, version: str, result: dict[str, Any
 {_bullet_list(assumptions)}
 
 ## Components
-{_bullet_list(components)}
+{_format_component_bullets(components, fallback=fallback_components)}
 
 ## Data Flow
-{_bullet_list(data_flow)}
+{data_flow_lines}
 
 ## Scaling and Availability
-- Scaling strategy: {hld.get("scaling_strategy", "Not specified.")}
-- Availability and DR: {hld.get("availability", "Not specified.")}
+- Scaling strategy: {_safe_text(hld.get("scaling_strategy"))}
+- Availability and DR: {_safe_text(hld.get("availability"))}
+- Failure isolation: Services are expected to fail independently with retries, timeout guards, and graceful degradation.
+- Recovery target guidance: Use rolling deploys and automated rollback triggers to reduce blast radius.
 
 ## Non-Functional Requirements
 - Performance and latency: derived from extracted requirements and service topology.
@@ -1793,7 +1904,7 @@ def render_hld_from_workflow(cfg: RunConfig, version: str, result: dict[str, Any
 {_bullet_list(trade_offs)}
 
 ## Capacity Estimates
-{_bullet_list([f"{k}: {v}" for k, v in capacity.items()], fallback="- Not specified.")}
+{capacity_lines}
 
 ## Prompt Context
 - Input request:
@@ -1822,24 +1933,25 @@ def render_lld_from_workflow(cfg: RunConfig, result: dict[str, Any]) -> str:
 ## Implementation Scope
 - Translate architecture into APIs, schemas, communication contracts, and operations controls.
 - Provide implementation guidance while keeping interfaces and failure behavior explicit.
+- Keep behavior deterministic across environments: local, staging, and production.
 
 ## APIs
-{_bullet_list([f"{item.get('method', '')} {item.get('path', '')} :: {item.get('description', '')}" for item in apis])}
+{_bullet_list([_format_api_endpoint_line(item) for item in apis])}
 
 ## Schemas
-{_bullet_list([f"{item.get('name', 'schema')} ({item.get('type', 'unknown')})" for item in dbs])}
+{_bullet_list([f"{_safe_text(item.get('name'), 'schema')} ({_safe_text(item.get('type'), 'unknown')}): tables={_safe_text(item.get('tables_or_collections'), '[]')}" for item in dbs])}
 
 ## Service Communication
-{_bullet_list([f"{item.get('from', '')} -> {item.get('to', '')} via {item.get('protocol', '')}: {item.get('description', '')}" for item in comms])}
+{_bullet_list([f"{_safe_text(item.get('from'))} -> {_safe_text(item.get('to'))} via {_safe_text(item.get('protocol'))}: {_safe_text(item.get('description'))}" for item in comms])}
 
 ## Caching
-{_bullet_list([f"{item.get('layer', '')} ({item.get('technology', '')}) ttl={item.get('ttl', '')}" for item in caching])}
+{_bullet_list([f"Layer={_safe_text(item.get('layer'))}, tech={_safe_text(item.get('technology'))}, ttl={_safe_text(item.get('ttl'))}, invalidation={_safe_text(item.get('invalidation_strategy'))}" for item in caching])}
 
 ## Error Handling
-{_bullet_list([f"{item.get('scenario', '')}: {item.get('strategy', '')} | fallback={item.get('fallback', '')}" for item in errors])}
+{_bullet_list([f"Scenario={_safe_text(item.get('scenario'))}: strategy={_safe_text(item.get('strategy'))}; fallback={_safe_text(item.get('fallback'))}" for item in errors])}
 
 ## Deployment
-{_bullet_list([f"{k}: {v}" for k, v in deployment.items()], fallback="- Not specified.")}
+{_bullet_list([f"{_safe_text(k)}: {_safe_text(v)}" for k, v in deployment.items()], fallback="- Not specified.")}
 
 ## Security
 {_bullet_list(security)}
@@ -1848,6 +1960,8 @@ def render_lld_from_workflow(cfg: RunConfig, result: dict[str, Any]) -> str:
 - Contract tests for request/response schemas and compatibility.
 - Integration tests for service communication and datastore boundaries.
 - Resilience tests for timeout, retry, and fallback behavior.
+- Load tests for critical APIs with p95/p99 tracking and alert thresholds.
+- Security tests covering authn/authz controls and secret handling pathways.
 
 ## Future Improvements
 - Add endpoint-by-endpoint SLA and idempotency contracts.
