@@ -59,13 +59,14 @@ When flags are omitted in an interactive terminal, CLI asks for:
 - role/persona
 - input mode (`vibe-now` or `ask`) for non-empty repositories
 - prompt text immediately for empty repositories
-- optional prompt text for non-empty repositories when `ask` is selected
+- optional prompt text for non-empty repositories when `ask` is selected, including when the repo has files but no existing `.desysflow` baseline
 
 Choices use plain typed/numeric selection.
 
 Repository-aware defaults:
 - If the current repository contains source files, CLI detects the dominant language by file extension count and uses that as the default language.
 - If the current repository is empty, CLI skips `Input mode` and directly asks for the product or feature prompt.
+- If the current repository has files but no `.desysflow` baseline yet, CLI still offers `vibe-now` or `ask` and explains that `vibe-now` infers strictly from the current directory.
 - If `--out` is omitted, CLI writes artifacts and local SQLite state under `./.desysflow`.
 
 Launcher loop commands:

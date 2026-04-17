@@ -618,27 +618,36 @@ def _collect_prompt_text(
 ) -> tuple[str, str]:
     prompt_text = prompt.strip()
 
-    if has_existing_design:
-        label = latest_design_version or "latest"
-        print(f"  Found existing .desysflow baseline ({label}).")
+    if source_has_files:
+        if has_existing_design:
+            label = latest_design_version or "latest"
+            print(f"  Found existing .desysflow baseline ({label}).")
+        else:
+            print("  No existing .desysflow baseline was found for this repository.")
+            print("  Choose 'vibe-now' to infer from the current directory only.")
+            print("  Choose 'ask' to provide an explicit feature/change request.")
+
         input_mode = _ask_choice("Input mode", ["vibe-now", "ask"], "vibe-now")
         print("")
         if input_mode == "ask":
             print("  Prompt")
-            print("  Describe the feature/change request for this codebase.")
+            if has_existing_design:
+                print("  Describe the feature/change request for this codebase.")
+            else:
+                print("  Describe the feature/change request for the current codebase.")
             entered_prompt = input("  > ").strip()
             if entered_prompt:
                 prompt_text = entered_prompt
         return prompt_text, input_mode
 
-    if not source_has_files:
-        print("  Prompt")
-        print("  No code, shell, or markdown files were found in this repository.")
-        print("  Describe the product/feature you want to design from scratch.")
-    else:
-        print("  Prompt")
-        print("  No existing .desysflow baseline was found for this repository.")
-        print("  Describe what you want the CLI to design or change.")
+    if has_existing_design:
+        label = latest_design_version or "latest"
+        print(f"  Found existing .desysflow baseline ({label}).")
+        return prompt_text, "vibe-now"
+
+    print("  Prompt")
+    print("  No code, shell, or markdown files were found in this repository.")
+    print("  Describe the product/feature you want to design from scratch.")
     entered_prompt = input("  > ").strip()
     return (entered_prompt or prompt_text), "ask"
 

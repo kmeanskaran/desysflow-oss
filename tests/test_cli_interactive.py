@@ -135,8 +135,22 @@ def test_collect_prompt_text_non_empty_repo_keeps_vibe_now_default(monkeypatch) 
     assert prompt == ""
 
 
-def test_collect_prompt_text_repo_without_baseline_forces_ask(monkeypatch) -> None:
-    responses = iter(["design around the current codebase"])
+def test_collect_prompt_text_repo_without_baseline_keeps_vibe_now_default(monkeypatch) -> None:
+    responses = iter([""])
+    monkeypatch.setattr("builtins.input", lambda _prompt="": next(responses))
+
+    prompt, mode = _collect_prompt_text(
+        source_has_files=True,
+        has_existing_design=False,
+        prompt="",
+    )
+
+    assert mode == "vibe-now"
+    assert prompt == ""
+
+
+def test_collect_prompt_text_repo_without_baseline_allows_ask(monkeypatch) -> None:
+    responses = iter(["ask", "design around the current codebase"])
     monkeypatch.setattr("builtins.input", lambda _prompt="": next(responses))
 
     prompt, mode = _collect_prompt_text(
@@ -147,6 +161,25 @@ def test_collect_prompt_text_repo_without_baseline_forces_ask(monkeypatch) -> No
 
     assert mode == "ask"
     assert prompt == "design around the current codebase"
+
+
+def test_collect_prompt_text_repo_without_baseline_prints_strict_vibe_now_guidance(
+    monkeypatch,
+    capsys,
+) -> None:
+    responses = iter([""])
+    monkeypatch.setattr("builtins.input", lambda _prompt="": next(responses))
+
+    _collect_prompt_text(
+        source_has_files=True,
+        has_existing_design=False,
+        prompt="",
+    )
+
+    output = capsys.readouterr().out
+    assert "No existing .desysflow baseline was found for this repository." in output
+    assert "Choose 'vibe-now' to infer from the current directory only." in output
+    assert "Choose 'ask' to provide an explicit feature/change request." in output
 
 
 def test_resolve_effective_mode_smart_uses_refine_when_baseline_exists() -> None:
