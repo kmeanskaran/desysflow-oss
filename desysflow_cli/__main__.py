@@ -195,16 +195,55 @@ LOG_EMOJI = {
     "cmd": "🧭",
     "params": "🧩",
     "stage": "📍",
-    "status": "⏳",
+    "status": "•",
     "done": "✅",
     "warn": "⚠️",
     "hint": "💡",
 }
 
+STAGE_EMOJI = {
+    "scope": "🧭",
+    "context": "🧭",
+    "extract": "🔎",
+    "update": "🔄",
+    "draft": "🏗️",
+    "review": "🧪",
+    "package": "📦",
+    "write artifacts": "💾",
+    "update local session db": "🗂️",
+}
+
+STAGE_TITLES = {
+    "scope": "Understand the request",
+    "context": "Load the current design",
+    "extract": "Inspect the codebase",
+    "update": "Refresh requirements and trade-offs",
+    "draft": "Draft the architecture",
+    "review": "Review and refine",
+    "package": "Build the deliverables",
+    "write artifacts": "Write files",
+    "update local session db": "Save session history",
+}
+
 
 def log_line(kind: str, message: str) -> None:
     emoji = LOG_EMOJI.get(kind, "•")
-    print(f"{emoji} [{kind}] {message}")
+    if kind == "stage":
+        print("")
+    print(f"{emoji} {message}")
+
+
+def _stage_line(stage_key: str, fallback_label: str) -> None:
+    emoji = STAGE_EMOJI.get(stage_key, "📍")
+    title = STAGE_TITLES.get(stage_key, fallback_label)
+    log_line("stage", f"{emoji} {title}")
+
+
+def _truncate_cli_text(text: str, limit: int = 120) -> str:
+    compact = " ".join(str(text).split())
+    if len(compact) <= limit:
+        return compact
+    return compact[: limit - 1].rstrip() + "…"
 
 
 def _truncate_for_prompt(text: str, limit: int = BASELINE_EXCERPT_LIMIT) -> str:
@@ -2260,27 +2299,30 @@ def _fmt_size_bytes(size: int) -> str:
 
 def _print_run_header(cfg: RunConfig, target: Path, version: str, previous: Path | None) -> None:
     print("")
-    log_line("run", "desysflow generation started")
-    log_line("cmd", f"requested={cfg.command} effective={cfg.effective_mode}")
-    log_line("params", f"project={cfg.project} version={version} parent={previous.name if previous else 'none'}")
-    log_line("params", f"model={cfg.model_provider or 'n/a'}:{cfg.model_name or 'n/a'} role={cfg.role}")
-    log_line("params", f"language={cfg.language} style={cfg.style} cloud={cfg.cloud} web_search={cfg.web_search}")
-    log_line("params", f"request={cfg.prompt or cfg.focus or 'auto-from-codebase'}")
+    action = "Refining the design" if cfg.effective_mode == "refine" else "Starting a new design run"
+    log_line("run", action)
+    print(f"   Project: {cfg.project} • Version: {version}")
+    if previous is not None:
+        print(f"   Base: {previous.name}")
+    print(f"   Setup: {cfg.language} • {cfg.style} • {cfg.cloud} • {cfg.role}")
+    print(f"   Model: {(cfg.model_provider or 'auto')} / {(cfg.model_name or 'auto')}")
+    print(f"   Request: {_truncate_cli_text(cfg.prompt or cfg.focus or 'Infer from the current codebase')}")
+    print(f"   Output: {target}")
 
 
 def _print_doc_status(docs: dict[str, str]) -> None:
-    log_line("status", "generated artifact bodies")
+    log_line("status", "Built the final artifact set.")
     for name, content in docs.items():
         size = len(content.encode("utf-8"))
-        print(f"  - {name:<20} {_fmt_size_bytes(size):>8}  sha={_short_hash(content)}")
+        print(f"   📄 {name:<20} {_fmt_size_bytes(size):>8}  sha={_short_hash(content)}")
 
 
 def _print_written_status(path: Path) -> None:
-    log_line("status", "wrote files")
+    log_line("status", "Saved generated files.")
     file_names = sorted(item.name for item in path.iterdir() if item.is_file())
     for name in file_names:
         file_path = path / name
-        print(f"  - {name:<20} {_fmt_size_bytes(file_path.stat().st_size):>8}")
+        print(f"   📄 {name:<20} {_fmt_size_bytes(file_path.stat().st_size):>8}")
 
 
 def _cli_progress_config(effective_mode: str) -> tuple[list[dict[str, str]], dict[str, str], str]:
@@ -2367,16 +2409,15 @@ def run(cfg: RunConfig) -> int:
     step_labels = {item["key"]: item["label"] for item in steps}
     current_stage = initial_stage
 
-    log_line("stage", step_labels[initial_stage])
+    _stage_line(initial_stage, step_labels[initial_stage])
     ctx = build_analysis_context(cfg)
     log_line(
         "status",
-        f"modules={len(ctx.module_map)} key_paths={len(ctx.key_paths)} "
-        f"references={len(ctx.references)} web_search_effective={'on' if ctx.web_enabled else 'off'}"
+        f"Scanned {len(ctx.module_map)} modules, {len(ctx.key_paths)} key paths, and {len(ctx.references)} references."
     )
     if ctx.web_enabled and not ctx.references:
-        log_line("warn", "Web search was enabled but returned 0 references (check network access or DDGS setup).")
-    log_line("status", "waiting for LLM response; local Ollama models can take a few minutes on large prompts")
+        log_line("warn", "Web search was enabled, but no references were returned.")
+    log_line("status", "Generating the design package. Local Ollama runs can take a few minutes.")
     user_request = build_user_request(cfg, ctx)
 
     def _on_workflow_update(node_key: str, _payload: dict[str, Any], _state: dict[str, Any]) -> None:
@@ -2384,7 +2425,7 @@ def run(cfg: RunConfig) -> int:
         stage_key = node_to_stage.get(node_key)
         if stage_key and stage_key != current_stage:
             current_stage = stage_key
-            log_line("stage", step_labels[stage_key])
+            _stage_line(stage_key, step_labels[stage_key])
 
     try:
         workflow_result = run_workflow_with_updates(
@@ -2397,25 +2438,26 @@ def run(cfg: RunConfig) -> int:
         lld_apis = workflow_result.get("lld_report", {}).get("api_endpoints", [])
         log_line(
             "status",
-            f"workflow generated components={len(hld_components) if isinstance(hld_components, list) else 0} "
-            f"api_endpoints={len(lld_apis) if isinstance(lld_apis, list) else 0}"
+            f"Drafted {len(hld_components) if isinstance(hld_components, list) else 0} components and "
+            f"{len(lld_apis) if isinstance(lld_apis, list) else 0} API endpoints."
         )
     except Exception as exc:
         if is_llm_limit_error(exc):
             llm_cfg = get_llm_config()
-            log_line("warn", "LLM request hit provider limits (rate/context/token)")
-            print(f"  Provider   : {llm_cfg.provider}")
-            print(f"  Model      : {llm_cfg.model}")
-            print("  Next steps :")
-            print("    - Retry with a shorter prompt/focus.")
-            print("    - Use --style minimal to reduce output size.")
-            print("    - Set --web-search off to shrink prompt context.")
+            log_line("warn", "The model request hit provider limits.")
+            print(f"   Provider: {llm_cfg.provider}")
+            print(f"   Model: {llm_cfg.model}")
+            print("   Try:")
+            print("   - Shorten the prompt or focus.")
+            print("   - Use --style minimal.")
+            print("   - Use --web-search off.")
             raise SystemExit(1) from exc
         raise SystemExit(f"prompt-driven workflow failed: {exc}") from exc
 
-    log_line("done", "generation source=llm_workflow")
+    log_line("done", "Design workflow complete.")
 
-    log_line("status", "assembling final artifacts")
+    _stage_line("package", "Build the deliverables")
+    log_line("status", "Assembling reports, diagram, and metadata.")
     docs = render_docs(cfg, version, ctx, workflow_result=workflow_result, user_request=user_request)
     _print_doc_status(docs)
     metadata = {
@@ -2441,14 +2483,14 @@ def run(cfg: RunConfig) -> int:
         "llm_workflow_used": True,
     }
 
-    log_line("stage", "write artifacts")
+    _stage_line("write artifacts", "Write files")
     write_artifacts(target, docs, metadata)
     (target / "TREE.md").write_text(folder_tree(target), encoding="utf-8")
     (target / "DIFF.md").write_text(build_diff(previous, docs), encoding="utf-8")
     (project_root / "latest").write_text(version + "\n", encoding="utf-8")
     _print_written_status(target)
 
-    log_line("stage", "update local session db")
+    _stage_line("update local session db", "Save session history")
     db_path = cli_db_path(cfg.output_root)
     init_session_db(db_path)
     run_id = record_run(db_path, cfg, target)
@@ -2462,9 +2504,9 @@ def run(cfg: RunConfig) -> int:
         record_event(db_path, run_id, "focus", cfg.focus)
     record_event(db_path, run_id, "web_search", f"enabled={ctx.web_enabled}, refs={len(ctx.references)}")
 
-    log_line("done", f"generated design artifacts at: {target}")
-    log_line("done", f"session db: {db_path}")
-    log_line("hint", "key files: HLD.md, LLD.md, TECHNICAL_REPORT.md, NON_TECHNICAL_DOC.md, diagram.mmd, DIFF.md")
+    log_line("done", f"Artifacts saved to {target}")
+    log_line("done", f"Session history saved to {db_path}")
+    log_line("hint", "Start with HLD.md, LLD.md, TECHNICAL_REPORT.md, NON_TECHNICAL_DOC.md, diagram.mmd, and DIFF.md.")
     return 0
 
 

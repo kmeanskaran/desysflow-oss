@@ -76,12 +76,12 @@ Launcher loop commands:
 - plain text: treat the text as a prompt and run design
 - `bye`: exit the loop
 
-Run log format uses tagged CLI lines such as:
-- `🚀 [run]` for the run header
-- `📍 [stage]` for workflow transitions
-- `⏳ [status]` for progress updates
-- `✅ [done]` for completion details
-- `⚠️ [warn]` and `💡 [hint]` for operator guidance
+Run output uses simple emoji-led lines:
+- `🚀` for the run header
+- stage headers like `🧭 Understand the request` and `🏗️ Draft the architecture`
+- short progress notes under each stage
+- `✅` for completion details
+- `⚠️` and `💡` for warnings and operator guidance
 
 You can also pass model settings explicitly:
 
