@@ -6,6 +6,13 @@ INVOKE_CWD="$(pwd)"
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT_DIR"
 
+handle_interrupt() {
+  printf '\nInterrupted by user.\n'
+  exit 130
+}
+
+trap handle_interrupt INT
+
 usage() {
   cat <<'EOF'
 Usage:
@@ -96,7 +103,7 @@ run_cli_loop() {
   while true; do
     if [ "$should_run" -eq 1 ]; then
       if ! run_design "$next_prompt"; then
-        echo "Design run exited with an error. You can try again, restart, or bye."
+        echo "Design run exited with an error. You can try again or bye."
       fi
       next_prompt=""
     fi
