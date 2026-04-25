@@ -12,7 +12,7 @@ if [ -f ".env.example" ]; then
 fi
 
 cleanup() {
-  echo "Stopping DesysFlow dev services..."
+  echo "Stopping DesysFlow Studio services..."
   kill "${API_PID:-}" "${UI_PID:-}" 2>/dev/null || true
 }
 
@@ -24,7 +24,7 @@ API_PID=$!
 ./scripts/ui.sh &
 UI_PID=$!
 
-echo "DesysFlow local dev started."
+echo "DesysFlow Studio started."
 echo "API: http://localhost:8000/docs"
 echo "UI:  http://localhost:5173"
 

@@ -10,10 +10,10 @@ desysflow redesign
 Launcher shortcut:
 
 ```bash
-letsvibedesign cli
+letsvibedesign
 ```
 
-`letsvibedesign cli` opens a persistent launcher loop. After each run it returns to a `letsvibe>` prompt instead of exiting immediately.
+`letsvibedesign` opens a persistent launcher loop. After each run it returns to a `letsvibe>` prompt instead of exiting immediately.
 
 ## `design`
 
@@ -74,7 +74,6 @@ Launcher loop commands:
 - `design`: ask for a prompt, then run `desysflow design --prompt "..."`
 - `design <prompt>`: run directly with that prompt
 - plain text: treat the text as a prompt and run design
-- `restart`: reopen the launcher mode picker
 - `bye`: exit the loop
 
 Run log format uses tagged CLI lines such as:

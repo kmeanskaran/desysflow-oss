@@ -572,7 +572,7 @@ export default function App() {
           </button>
           <div className="header__logo">
             <div className="header__logo-mark">D</div>
-            <span className="header__logo-text">DeSysFlow</span>
+            <span className="header__logo-text">DesysFlow Studio</span>
           </div>
           <div className="header__spacer" />
           {modelConfig && (
@@ -645,7 +645,7 @@ export default function App() {
                 {chatHistory.length === 0 && !loading ? (
                   <div className="empty">
                     <div className="empty__title">Describe your system</div>
-                    <div className="empty__hint">Include product goal, users, scale hints, or quality attributes. DesysFlow will produce a complete architecture package.</div>
+                    <div className="empty__hint">Include product goal, users, scale hints, or quality attributes. DesysFlow Studio will produce a complete architecture package.</div>
                   </div>
                 ) : chatHistory.filter((m) => m?.content?.trim() && m.role !== 'system').map((m, i) => (
                   <div key={i} className={`msg msg--${m.role === 'user' ? 'user' : 'assistant'} fade-in`}>
@@ -669,7 +669,7 @@ export default function App() {
                 {!hasArtifacts && !loading ? (
                   <div className="empty">
                     <div className="empty__title">Artifacts appear here</div>
-                    <div className="empty__hint">Send a message and DesysFlow will generate a complete design package.</div>
+                    <div className="empty__hint">Send a message and DesysFlow Studio will generate a complete design package.</div>
                   </div>
                 ) : renderArtifact()}
               </div>

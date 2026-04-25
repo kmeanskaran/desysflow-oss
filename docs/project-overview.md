@@ -24,7 +24,7 @@ Current scope includes:
 - Python package metadata in `pyproject.toml`
 - CLI entrypoint: `python -m desysflow_cli`
 - helper launcher: `letsvibedesign`
-- launcher modes: `cli`, `dev`
+- launcher commands: `letsvibedesign`, `letsvibedesign studio`
 
 ## Configuration
 

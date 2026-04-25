@@ -1,5 +1,5 @@
 """
-DesysFlow — System Design AI Agent Backend.
+DesysFlow Studio — System Design AI Agent Backend.
 
 FastAPI application entry point.
 """
@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 app = FastAPI(
-    title="DesysFlow — System Design AI Agent",
+    title="DesysFlow Studio — System Design AI Agent",
     description=(
         "A production-ready, multi-step AI agent backend that accepts system "
         "design requests and produces structured architecture recommendations "
@@ -58,7 +58,7 @@ app.include_router(router)
 
 @app.on_event("startup")
 async def startup_event() -> None:
-    logger.info("DesysFlow server starting up …")
+    logger.info("DesysFlow Studio server starting up …")
     logger.info("Docs available at http://localhost:8000/docs")
     logger.info("Session store: %s", get_session_store().status())
     logger.info("Conversation store: %s", get_conversation_store().status())

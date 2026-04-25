@@ -3,10 +3,10 @@
 ## Basic Local Design Generation
 
 ```bash
-letsvibedesign cli
+letsvibedesign
 ```
 
-Then keep working from the `letsvibe>` prompt with `run`, `design <prompt>`, `restart`, or `bye`.
+Then keep working from the `letsvibe>` prompt with `run`, `design <prompt>`, or `bye`.
 
 Or run the command directly:
 
@@ -27,7 +27,7 @@ desysflow redesign \
 ## Run API + UI Together
 
 ```bash
-letsvibedesign dev
+letsvibedesign studio
 ```
 
 ## Generate with Explicit Options

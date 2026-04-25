@@ -58,34 +58,33 @@ LETSVIBEDESIGN_LOCAL_REPO="$PWD" LETSVIBEDESIGN_OFFLINE=1 ./scripts/install.sh
 letsvibedesign
 ```
 
-Choose a mode from the prompt, or run directly:
+Run directly:
 
 ```bash
-letsvibedesign cli
-letsvibedesign dev
+letsvibedesign
+letsvibedesign studio
 ```
 
 ## Launcher Modes
 
-- `cli`: starts the interactive CLI loop for repeated `desysflow design` runs
-- `dev`: starts API + UI together
+- `letsvibedesign`: starts the interactive CLI loop for repeated `desysflow design` runs
+- `letsvibedesign studio`: starts API + UI together
 
 ## CLI Usage
 
 Run the basic guided CLI:
 
 ```bash
-letsvibedesign cli
+letsvibedesign
 ```
 
-`letsvibedesign cli` stays open after each generation and shows a `letsvibe>` prompt.
+`letsvibedesign` stays open after each generation and shows a `letsvibe>` prompt.
 
 Interactive prompt commands:
 - `Enter` or `run`: run again with normal interactive flow
 - `design`: asks for a prompt, then runs `desysflow design --prompt "..."`
 - `design <prompt>`: run directly with that prompt
 - Any plain text: treated as a prompt and runs design
-- `restart`: show launcher options again (`cli`, `dev`)
 - `bye`: exit the CLI loop
 
 Run directly with flags:
@@ -121,7 +120,7 @@ Interactive defaults:
 Start API + UI together:
 
 ```bash
-letsvibedesign dev
+letsvibedesign studio
 ```
 
 Open:

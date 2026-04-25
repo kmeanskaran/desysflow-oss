@@ -152,5 +152,5 @@ else
 fi
 
 echo "Cold start complete."
-echo "CLI: letsvibedesign cli"
-echo "UI + API: letsvibedesign dev"
+echo "CLI: letsvibedesign"
+echo "UI + API: letsvibedesign studio"
