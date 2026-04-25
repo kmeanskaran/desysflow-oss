@@ -150,7 +150,7 @@ def test_collect_prompt_text_repo_without_baseline_keeps_vibe_now_default(monkey
 
 
 def test_collect_prompt_text_repo_without_baseline_allows_ask(monkeypatch) -> None:
-    responses = iter(["ask", "design around the current codebase"])
+    responses = iter(["design around the current codebase"])
     monkeypatch.setattr("builtins.input", lambda _prompt="": next(responses))
 
     prompt, mode = _collect_prompt_text(
@@ -178,8 +178,8 @@ def test_collect_prompt_text_repo_without_baseline_prints_strict_vibe_now_guidan
 
     output = capsys.readouterr().out
     assert "No existing .desysflow baseline was found for this repository." in output
-    assert "Choose 'vibe-now' to infer from the current directory only." in output
-    assert "Choose 'ask' to provide an explicit feature/change request." in output
+    assert "Press Enter to continue from the current codebase." in output
+    assert "Or add an optional prompt to steer this design run." in output
 
 
 def test_resolve_effective_mode_smart_uses_refine_when_baseline_exists() -> None:
