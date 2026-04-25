@@ -1536,6 +1536,80 @@ def _format_api_endpoint_line(item: Any) -> str:
     return f"`{method} {path}` - {description} | request={request_body} | response={response_body}"
 
 
+def _project_label_from_cwd() -> str:
+    name = Path.cwd().name.strip()
+    return name or "current-workspace"
+
+
+def _markdown_table(headers: list[str], rows: list[list[Any]], fallback: str = "- Not specified.") -> str:
+    if not rows:
+        return fallback
+    safe_headers = [str(item) for item in headers]
+    lines = [
+        "| " + " | ".join(safe_headers) + " |",
+        "| " + " | ".join("---" for _ in safe_headers) + " |",
+    ]
+    for row in rows:
+        cells = [_safe_text(cell).replace("\n", " ").replace("|", "/") for cell in row]
+        lines.append("| " + " | ".join(cells) + " |")
+    return "\n".join(lines)
+
+
+def _summarize_component_landscape(components: list[Any]) -> list[str]:
+    normalized: list[tuple[str, str, str]] = []
+    for item in components:
+        if isinstance(item, dict):
+            name = _safe_text(item.get("name"), "Unnamed Component")
+            responsibility = _safe_text(item.get("responsibility"), "Responsibility not specified.")
+            comp_type = _safe_text(item.get("type"), _infer_component_type(name, responsibility)).lower()
+        else:
+            name = _safe_text(item, "Unnamed Component")
+            responsibility = "Supports core platform capabilities."
+            comp_type = _infer_component_type(name, responsibility)
+        normalized.append((name, responsibility, comp_type))
+
+    if not normalized:
+        return ["Core application services coordinate requests, persistence, and downstream integrations."]
+
+    by_type: dict[str, list[str]] = {}
+    for name, _responsibility, comp_type in normalized:
+        by_type.setdefault(comp_type, []).append(name)
+
+    ordered_types = ["gateway", "service", "database", "cache", "queue", "storage", "monitoring", "cdn"]
+    lines: list[str] = []
+    for comp_type in ordered_types:
+        names = by_type.get(comp_type, [])
+        if not names:
+            continue
+        lines.append(f"{comp_type.title()} layer: {', '.join(names[:4])}{' and more' if len(names) > 4 else ''}.")
+
+    if not lines:
+        lines.append("Component landscape extracted from workflow output needs further refinement.")
+    return lines
+
+
+def _format_schema_line(item: Any) -> str:
+    if not isinstance(item, dict):
+        return _safe_text(item)
+    name = _safe_text(item.get("name"), "schema")
+    storage_type = _safe_text(item.get("type"), "unknown")
+    raw_tables = item.get("tables_or_collections")
+    if isinstance(raw_tables, list):
+        structure = ", ".join(_safe_text(entry) for entry in raw_tables[:6]) or "not specified"
+    else:
+        structure = _safe_text(raw_tables, "not specified")
+    return f"{name} ({storage_type}) stores {structure}."
+
+
+def _format_comm_line(item: Any) -> str:
+    if not isinstance(item, dict):
+        return _safe_text(item)
+    return (
+        f"{_safe_text(item.get('from'))} -> {_safe_text(item.get('to'))} via "
+        f"{_safe_text(item.get('protocol'))}: {_safe_text(item.get('description'))}"
+    )
+
+
 def render_hld(cfg: RunConfig, version: str, ctx: AnalysisContext) -> str:
     style_hint = style_notes(cfg.style)
     module_components = [
@@ -1874,6 +1948,16 @@ def render_hld_from_workflow(cfg: RunConfig, version: str, result: dict[str, Any
     data_flow = hld.get("data_flow", []) if isinstance(hld.get("data_flow"), list) else []
     trade_offs = hld.get("trade_offs", []) if isinstance(hld.get("trade_offs"), list) else []
     capacity = hld.get("estimated_capacity", {}) if isinstance(hld.get("estimated_capacity"), dict) else {}
+    requirements = result.get("requirements", {}) if isinstance(result.get("requirements"), dict) else {}
+    component_summary = _summarize_component_landscape(components)
+    project_name = _project_label_from_cwd()
+    key_quality_attributes = [
+        f"Latency target: {_safe_text(requirements.get('latency_requirement'))}",
+        f"Traffic expectation: {_safe_text(requirements.get('traffic_estimate'))}",
+        f"Consistency model: {_safe_text(requirements.get('consistency_requirement'))}",
+        f"Budget constraint: {_safe_text(requirements.get('budget_constraint'))}",
+        f"Growth projection: {_safe_text(requirements.get('scale_growth_projection'))}",
+    ]
     fallback_components = [
         {"name": "API Gateway", "responsibility": "Route and rate-limit client requests", "type": "gateway"},
         {"name": "Auth Service", "responsibility": "Validate OAuth2 tokens and enforce IAM policies", "type": "service"},
@@ -1897,6 +1981,17 @@ def render_hld_from_workflow(cfg: RunConfig, version: str, result: dict[str, Any
         "Non-functional targets are derived from extracted requirements when explicit values are missing.",
         "Cloud and runtime choices can be evolved in follow-up design iterations.",
     ]
+    component_rows = []
+    for item in (components if components else fallback_components):
+        if isinstance(item, dict):
+            name = _safe_text(item.get("name"), "Unnamed Component")
+            responsibility = _safe_text(item.get("responsibility"), "Responsibility not specified.")
+            comp_type = _safe_text(item.get("type"), _infer_component_type(name, responsibility)).lower()
+        else:
+            name = _safe_text(item, "Unnamed Component")
+            responsibility = "Supports core platform capabilities."
+            comp_type = _infer_component_type(name, responsibility)
+        component_rows.append([name, comp_type, responsibility])
     data_flow_lines = _bullet_list(data_flow, fallback="- Request and processing flow not specified.")
     if data_flow:
         data_flow_lines = _bullet_list([f"Step {idx + 1}: {_safe_text(step)}" for idx, step in enumerate(data_flow)])
@@ -1907,13 +2002,21 @@ def render_hld_from_workflow(cfg: RunConfig, version: str, result: dict[str, Any
     return f"""# HLD
 
 ## Overview
-- Project: `{cfg.project}`
+- Project: `{project_name}`
 - Version: `{version}`
 - Role: `{cfg.role}`
 - Preferred language: `{cfg.language}`
 - Cloud target: `{cfg.cloud}`
 
 {hld.get("system_overview", "No overview generated.")}
+
+### Project Overview
+- project-name: `{project_name}`
+- design-package: `{cfg.project}`
+- outcome: a high-level architecture baseline for the current working directory
+
+## Architecture Summary
+{_bullet_list(component_summary)}
 
 ## Scope and Assumptions
 ### Scope
@@ -1923,7 +2026,7 @@ def render_hld_from_workflow(cfg: RunConfig, version: str, result: dict[str, Any
 {_bullet_list(assumptions)}
 
 ## Components
-{_format_component_bullets(components, fallback=fallback_components)}
+{_markdown_table(["Component", "Type", "Responsibility"], component_rows)}
 
 ## Data Flow
 {data_flow_lines}
@@ -1935,7 +2038,7 @@ def render_hld_from_workflow(cfg: RunConfig, version: str, result: dict[str, Any
 - Recovery target guidance: Use rolling deploys and automated rollback triggers to reduce blast radius.
 
 ## Non-Functional Requirements
-- Performance and latency: derived from extracted requirements and service topology.
+{_bullet_list(key_quality_attributes)}
 - Reliability objective: high availability with graceful degradation on downstream failures.
 - Security baseline: least privilege, encrypted transport, and auditable operational controls.
 
@@ -1967,6 +2070,47 @@ def render_lld_from_workflow(cfg: RunConfig, result: dict[str, Any]) -> str:
     errors = lld.get("error_handling", []) if isinstance(lld.get("error_handling"), list) else []
     deployment = lld.get("deployment", {}) if isinstance(lld.get("deployment"), dict) else {}
     security = lld.get("security", []) if isinstance(lld.get("security"), list) else []
+    requirements = result.get("requirements", {}) if isinstance(result.get("requirements"), dict) else {}
+    api_rows: list[list[Any]] = []
+    for item in apis:
+        if isinstance(item, dict):
+            api_rows.append([
+                _safe_text(item.get("method"), "METHOD").upper(),
+                _safe_text(item.get("path"), "/"),
+                _safe_text(item.get("description")),
+                _safe_text(item.get("request_body"), "{}"),
+                _safe_text(item.get("response_body"), "{}"),
+            ])
+        else:
+            api_rows.append(["METHOD", "/", _safe_text(item), "{}", "{}"])
+    schema_rows: list[list[Any]] = []
+    for item in dbs:
+        if isinstance(item, dict):
+            raw_tables = item.get("tables_or_collections")
+            structure = ", ".join(_safe_text(entry) for entry in raw_tables[:6]) if isinstance(raw_tables, list) else _safe_text(raw_tables)
+            schema_rows.append([
+                _safe_text(item.get("name"), "schema"),
+                _safe_text(item.get("type"), "unknown"),
+                structure,
+            ])
+        else:
+            schema_rows.append([_safe_text(item), "unknown", "Not specified."])
+    communication_lines = [_format_comm_line(item) for item in comms]
+    caching_lines = [
+        f"Layer={_safe_text(item.get('layer'))}, tech={_safe_text(item.get('technology'))}, "
+        f"ttl={_safe_text(item.get('ttl'))}, invalidation={_safe_text(item.get('invalidation_strategy'))}"
+        for item in caching if isinstance(item, dict)
+    ]
+    error_lines = [
+        f"Scenario={_safe_text(item.get('scenario'))}: strategy={_safe_text(item.get('strategy'))}; "
+        f"fallback={_safe_text(item.get('fallback'))}"
+        for item in errors if isinstance(item, dict)
+    ]
+    implementation_notes = [
+        f"Preferred language: {_safe_text(requirements.get('preferred_language'), cfg.language)}",
+        f"Latency requirement: {_safe_text(requirements.get('latency_requirement'))}",
+        f"Traffic estimate: {_safe_text(requirements.get('traffic_estimate'))}",
+    ]
     return f"""# LLD
 
 ## Implementation Scope
@@ -1974,26 +2118,31 @@ def render_lld_from_workflow(cfg: RunConfig, result: dict[str, Any]) -> str:
 - Provide implementation guidance while keeping interfaces and failure behavior explicit.
 - Keep behavior deterministic across environments: local, staging, and production.
 
+## Design Quality Notes
+{_bullet_list(implementation_notes)}
+- Interfaces should stay explicit, testable, and version-safe across service boundaries.
+- Data access paths should prefer clear ownership over implicit cross-service coupling.
+
 ## APIs
-{_bullet_list([_format_api_endpoint_line(item) for item in apis])}
+{_markdown_table(["Method", "Path", "Purpose", "Request", "Response"], api_rows)}
 
 ## Schemas
-{_bullet_list([f"{_safe_text(item.get('name'), 'schema')} ({_safe_text(item.get('type'), 'unknown')}): tables={_safe_text(item.get('tables_or_collections'), '[]')}" for item in dbs])}
+{_markdown_table(["Schema", "Type", "Tables / Collections"], schema_rows)}
 
 ## Service Communication
-{_bullet_list([f"{_safe_text(item.get('from'))} -> {_safe_text(item.get('to'))} via {_safe_text(item.get('protocol'))}: {_safe_text(item.get('description'))}" for item in comms])}
+{_bullet_list(communication_lines, fallback="- Service communication details were not specified.")}
 
 ## Caching
-{_bullet_list([f"Layer={_safe_text(item.get('layer'))}, tech={_safe_text(item.get('technology'))}, ttl={_safe_text(item.get('ttl'))}, invalidation={_safe_text(item.get('invalidation_strategy'))}" for item in caching])}
+{_bullet_list(caching_lines, fallback="- No caching strategy was specified.")}
 
 ## Error Handling
-{_bullet_list([f"Scenario={_safe_text(item.get('scenario'))}: strategy={_safe_text(item.get('strategy'))}; fallback={_safe_text(item.get('fallback'))}" for item in errors])}
+{_bullet_list(error_lines, fallback="- No explicit error-handling scenarios were specified.")}
 
 ## Deployment
 {_bullet_list([f"{_safe_text(k)}: {_safe_text(v)}" for k, v in deployment.items()], fallback="- Not specified.")}
 
 ## Security
-{_bullet_list(security)}
+{_bullet_list(security, fallback="- Security controls were not specified.")}
 
 ## Testing and Validation
 - Contract tests for request/response schemas and compatibility.
