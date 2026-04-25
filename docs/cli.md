@@ -78,7 +78,7 @@ Launcher loop commands:
 
 Run output uses simple emoji-led lines:
 - `🚀` for the run header
-- stage headers like `🧭 Understand the request` and `🏗️ Draft the architecture`
+- numbered stage headers like `Step 1/5 🧭 Understand the request` and `Step 3/5 🏗️ Design the solution`
 - short progress notes under each stage
 - `✅` for completion details
 - `⚠️` and `💡` for warnings and operator guidance

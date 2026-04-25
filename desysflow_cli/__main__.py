@@ -211,24 +211,20 @@ STAGE_EMOJI = {
     "scope": "🧭",
     "context": "🧭",
     "extract": "🔎",
-    "update": "🔄",
+    "update": "🔎",
     "draft": "🏗️",
     "review": "🧪",
     "package": "📦",
-    "write artifacts": "💾",
-    "update local session db": "🗂️",
 }
 
 STAGE_TITLES = {
     "scope": "Understand the request",
     "context": "Load the current design",
-    "extract": "Inspect the codebase",
-    "update": "Refresh requirements and trade-offs",
-    "draft": "Draft the architecture",
-    "review": "Review and refine",
+    "extract": "Analyze the workspace",
+    "update": "Analyze the workspace",
+    "draft": "Design the solution",
+    "review": "Review the outputs",
     "package": "Build the deliverables",
-    "write artifacts": "Write files",
-    "update local session db": "Save session history",
 }
 
 
@@ -239,10 +235,12 @@ def log_line(kind: str, message: str) -> None:
     print(f"{emoji} {message}")
 
 
-def _stage_line(stage_key: str, fallback_label: str) -> None:
+def _stage_line(stage_key: str, fallback_label: str, stage_positions: dict[str, int], stage_total: int) -> None:
     emoji = STAGE_EMOJI.get(stage_key, "📍")
     title = STAGE_TITLES.get(stage_key, fallback_label)
-    log_line("stage", f"{emoji} {title}")
+    number = stage_positions.get(stage_key)
+    prefix = f"Step {number}/{stage_total}" if number is not None else "Step"
+    log_line("stage", f"{prefix} {emoji} {title}")
 
 
 def _truncate_cli_text(text: str, limit: int = 120) -> str:
@@ -2531,17 +2529,18 @@ def _print_run_header(cfg: RunConfig, target: Path, version: str, previous: Path
     print("")
     action = "Refining the design" if cfg.effective_mode == "refine" else "Starting a new design run"
     log_line("run", action)
-    print(f"   Project: {cfg.project} • Version: {version}")
+    print(f"   Project: {cfg.project}")
+    print(f"   Version: {version}")
     if previous is not None:
         print(f"   Base: {previous.name}")
-    print(f"   Setup: {cfg.language} • {cfg.style} • {cfg.cloud} • {cfg.role}")
+    print(f"   Setup: {cfg.language} / {cfg.style} / {cfg.cloud} / {cfg.role}")
     print(f"   Model: {(cfg.model_provider or 'auto')} / {(cfg.model_name or 'auto')}")
     print(f"   Request: {_truncate_cli_text(cfg.prompt or cfg.focus or 'Infer from the current codebase')}")
     print(f"   Output: {target}")
 
 
 def _print_doc_status(docs: dict[str, str]) -> None:
-    log_line("status", "Built the final artifact set.")
+    log_line("status", "Prepared the final artifact set.")
     for name, content in docs.items():
         size = len(content.encode("utf-8"))
         print(f"   📄 {name:<20} {_fmt_size_bytes(size):>8}  sha={_short_hash(content)}")
@@ -2637,17 +2636,19 @@ def run(cfg: RunConfig) -> int:
 
     steps, node_to_stage, initial_stage = _cli_progress_config(cfg.effective_mode)
     step_labels = {item["key"]: item["label"] for item in steps}
+    stage_positions = {item["key"]: idx + 1 for idx, item in enumerate(steps)}
+    stage_total = len(steps)
     current_stage = initial_stage
 
-    _stage_line(initial_stage, step_labels[initial_stage])
+    _stage_line(initial_stage, step_labels[initial_stage], stage_positions, stage_total)
     ctx = build_analysis_context(cfg)
     log_line(
         "status",
-        f"Scanned {len(ctx.module_map)} modules, {len(ctx.key_paths)} key paths, and {len(ctx.references)} references."
+        f"Found {len(ctx.module_map)} modules, {len(ctx.key_paths)} key paths, and {len(ctx.references)} references."
     )
     if ctx.web_enabled and not ctx.references:
         log_line("warn", "Web search was enabled, but no references were returned.")
-    log_line("status", "Generating the design package. Local Ollama runs can take a few minutes.")
+    log_line("status", "Waiting for the model. Local Ollama runs can take a few minutes.")
     user_request = build_user_request(cfg, ctx)
 
     def _on_workflow_update(node_key: str, _payload: dict[str, Any], _state: dict[str, Any]) -> None:
@@ -2655,7 +2656,7 @@ def run(cfg: RunConfig) -> int:
         stage_key = node_to_stage.get(node_key)
         if stage_key and stage_key != current_stage:
             current_stage = stage_key
-            _stage_line(stage_key, step_labels[stage_key])
+            _stage_line(stage_key, step_labels[stage_key], stage_positions, stage_total)
 
     try:
         workflow_result = run_workflow_with_updates(
@@ -2668,7 +2669,7 @@ def run(cfg: RunConfig) -> int:
         lld_apis = workflow_result.get("lld_report", {}).get("api_endpoints", [])
         log_line(
             "status",
-            f"Drafted {len(hld_components) if isinstance(hld_components, list) else 0} components and "
+            f"Created {len(hld_components) if isinstance(hld_components, list) else 0} components and "
             f"{len(lld_apis) if isinstance(lld_apis, list) else 0} API endpoints."
         )
     except Exception as exc:
@@ -2686,7 +2687,8 @@ def run(cfg: RunConfig) -> int:
 
     log_line("done", "Design workflow complete.")
 
-    _stage_line("package", "Build the deliverables")
+    if current_stage != "package":
+        _stage_line("package", "Build the deliverables", stage_positions, stage_total)
     log_line("status", "Assembling reports, diagram, and metadata.")
     docs = render_docs(cfg, version, ctx, workflow_result=workflow_result, user_request=user_request)
     _print_doc_status(docs)
@@ -2713,14 +2715,14 @@ def run(cfg: RunConfig) -> int:
         "llm_workflow_used": True,
     }
 
-    _stage_line("write artifacts", "Write files")
+    log_line("status", "Writing files.")
     write_artifacts(target, docs, metadata)
     (target / "TREE.md").write_text(folder_tree(target), encoding="utf-8")
     (target / "DIFF.md").write_text(build_diff(previous, docs), encoding="utf-8")
     (project_root / "latest").write_text(version + "\n", encoding="utf-8")
     _print_written_status(target)
 
-    _stage_line("update local session db", "Save session history")
+    log_line("status", "Saving session history.")
     db_path = cli_db_path(cfg.output_root)
     init_session_db(db_path)
     run_id = record_run(db_path, cfg, target)
