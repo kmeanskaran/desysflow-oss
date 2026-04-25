@@ -1,5 +1,5 @@
 import { render, screen } from '@testing-library/react'
-import { vi } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import MessageContent from './MessageContent'
 
 vi.mock('./MermaidDiagram', () => ({
