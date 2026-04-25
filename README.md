@@ -78,12 +78,13 @@ Run the basic guided CLI:
 letsvibedesign
 ```
 
-`letsvibedesign` stays open after each generation and shows a `letsvibe>` prompt.
+`letsvibedesign` stays open after each generation and shows a `letsdesign>` prompt.
 
 Interactive prompt commands:
-- `Enter` or `run`: run again with normal interactive flow
-- `design`: asks for a prompt, then runs `desysflow design --prompt "..."`
+- `Enter` or `run`: run again with the current saved stack
+- `design`: asks for a prompt, then continues with the current saved stack
 - `design <prompt>`: run directly with that prompt
+- `restart`: clear saved selections and start from scratch
 - Any plain text: treated as a prompt and runs design
 - `bye`: exit the CLI loop
 

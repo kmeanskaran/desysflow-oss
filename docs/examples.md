@@ -6,7 +6,7 @@
 letsvibedesign
 ```
 
-Then keep working from the `letsvibe>` prompt with `run`, `design <prompt>`, or `bye`.
+Then keep working from the `letsdesign>` prompt with `run`, `design <prompt>`, `restart`, or `bye`.
 
 Or run the command directly:
 

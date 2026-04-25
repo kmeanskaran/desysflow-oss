@@ -46,7 +46,7 @@ letsvibedesign studio   # API + UI
 ```
 
 Notes:
-- `letsvibedesign` runs the persistent CLI loop and returns to `letsvibe>` after each generation.
+- `letsvibedesign` runs the persistent CLI loop and returns to `letsdesign>` after each generation.
 - `studio` runs both services and prints both URLs.
 
 ## 3. Backend and UI URLs

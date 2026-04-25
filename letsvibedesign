@@ -56,6 +56,64 @@ normalize_storage_root() {
   esac
 }
 
+launcher_state_file() {
+  printf '%s\n' "$DESYSFLOW_STORAGE_ROOT/.letsvibedesign-state.env"
+}
+
+clear_launcher_state() {
+  local state_file
+  state_file="$(launcher_state_file)"
+  rm -f "$state_file"
+  unset DESYSFLOW_LAUNCHER_SOURCE
+  unset DESYSFLOW_LAUNCHER_PROJECT
+  unset DESYSFLOW_LAUNCHER_MODEL_PROVIDER
+  unset DESYSFLOW_LAUNCHER_MODEL
+  unset DESYSFLOW_LAUNCHER_BASE_URL
+  unset DESYSFLOW_LAUNCHER_LANGUAGE
+  unset DESYSFLOW_LAUNCHER_STYLE
+  unset DESYSFLOW_LAUNCHER_CLOUD
+  unset DESYSFLOW_LAUNCHER_WEB_SEARCH
+  unset DESYSFLOW_LAUNCHER_ROLE
+  unset DESYSFLOW_LAUNCHER_MODE
+}
+
+load_launcher_state() {
+  local state_file
+  state_file="$(launcher_state_file)"
+  if [ ! -f "$state_file" ]; then
+    clear_launcher_state
+    return 1
+  fi
+
+  # shellcheck disable=SC1090
+  . "$state_file"
+
+  if [ "${DESYSFLOW_LAUNCHER_SOURCE:-}" != "$INVOKE_CWD" ]; then
+    clear_launcher_state
+    return 1
+  fi
+
+  return 0
+}
+
+provider_api_key_env_name() {
+  case "${1:-}" in
+    openai) printf '%s\n' "OPENAI_API_KEY" ;;
+    anthropic) printf '%s\n' "ANTHROPIC_API_KEY" ;;
+    groq) printf '%s\n' "GROQ_API_KEY" ;;
+    *) printf '%s\n' "" ;;
+  esac
+}
+
+provider_base_url_env_name() {
+  case "${1:-}" in
+    openai) printf '%s\n' "OPENAI_BASE_URL" ;;
+    anthropic) printf '%s\n' "ANTHROPIC_BASE_URL" ;;
+    groq) printf '%s\n' "GROQ_BASE_URL" ;;
+    *) printf '%s\n' "OLLAMA_BASE_URL" ;;
+  esac
+}
+
 run_mode() {
   local mode="$1"
   case "$mode" in
@@ -87,22 +145,59 @@ run_cli_loop() {
   echo "Starting CLI design flow."
   echo "After each run:"
   echo "  - design <prompt> to run with a prompt"
-  echo "  - design to enter a prompt interactively"
-  echo "  - ls / pwd to inspect your invoke directory"
-  echo "  - use letsvibedesign studio from your shell to open the UI"
+  echo "  - design to enter a prompt and keep the current selected stack"
+  echo "  - restart to clear saved selections and start from scratch"
   echo "  - bye to exit"
 
   local should_run=1
   local choice=""
   local next_prompt=""
+  local force_restart=0
 
   run_design() {
     local design_prompt="${1:-}"
-    if [ -n "$design_prompt" ]; then
+    local -a args
+    local use_saved_state=0
+
+    if [ "$force_restart" -eq 0 ] && load_launcher_state; then
+      local provider
+      local api_key_env_name
+      local base_url_env_name
+
+      provider="${DESYSFLOW_LAUNCHER_MODEL_PROVIDER:-}"
+      api_key_env_name="$(provider_api_key_env_name "$provider")"
+      if [ -n "$provider" ] && [ -n "$api_key_env_name" ] && [ -z "${!api_key_env_name:-}" ]; then
+        clear_launcher_state
+      else
+        use_saved_state=1
+        export MODEL_PROVIDER="$DESYSFLOW_LAUNCHER_MODEL_PROVIDER"
+        base_url_env_name="$(provider_base_url_env_name "$provider")"
+        if [ -n "${DESYSFLOW_LAUNCHER_BASE_URL:-}" ] && [ -n "$base_url_env_name" ]; then
+          export "$base_url_env_name=$DESYSFLOW_LAUNCHER_BASE_URL"
+        fi
+      fi
+    fi
+
+    if [ "$use_saved_state" -eq 1 ]; then
+      args=(design --source "$INVOKE_CWD" --no-interactive)
+      [ -n "${DESYSFLOW_LAUNCHER_MODEL_PROVIDER:-}" ] && args+=(--model-provider "$DESYSFLOW_LAUNCHER_MODEL_PROVIDER")
+      [ -n "${DESYSFLOW_LAUNCHER_MODEL:-}" ] && args+=(--model "$DESYSFLOW_LAUNCHER_MODEL")
+      [ -n "${DESYSFLOW_LAUNCHER_LANGUAGE:-}" ] && args+=(--language "$DESYSFLOW_LAUNCHER_LANGUAGE")
+      [ -n "${DESYSFLOW_LAUNCHER_STYLE:-}" ] && args+=(--style "$DESYSFLOW_LAUNCHER_STYLE")
+      [ -n "${DESYSFLOW_LAUNCHER_CLOUD:-}" ] && args+=(--cloud "$DESYSFLOW_LAUNCHER_CLOUD")
+      [ -n "${DESYSFLOW_LAUNCHER_WEB_SEARCH:-}" ] && args+=(--web-search "$DESYSFLOW_LAUNCHER_WEB_SEARCH")
+      [ -n "${DESYSFLOW_LAUNCHER_ROLE:-}" ] && args+=(--role "$DESYSFLOW_LAUNCHER_ROLE")
+      [ -n "${DESYSFLOW_LAUNCHER_MODE:-}" ] && args+=(--mode "$DESYSFLOW_LAUNCHER_MODE")
+      if [ -n "$design_prompt" ]; then
+        args+=(--prompt "$design_prompt")
+      fi
+      uv run desysflow "${args[@]}"
+    elif [ -n "$design_prompt" ]; then
       uv run desysflow design --source "$INVOKE_CWD" --prompt "$design_prompt"
     else
       uv run desysflow design --source "$INVOKE_CWD"
     fi
+    force_restart=0
   }
 
   while true; do
@@ -113,7 +208,7 @@ run_cli_loop() {
       next_prompt=""
     fi
 
-    printf "letsvibe> "
+    printf "letsdesign> [design | restart | bye] "
     if ! read -r choice; then
       break
     fi
@@ -134,6 +229,12 @@ run_cli_loop() {
         next_prompt="${choice#design }"
         should_run=1
         ;;
+      restart)
+        clear_launcher_state
+        force_restart=1
+        next_prompt=""
+        should_run=1
+        ;;
       ls)
         ls -la "$INVOKE_CWD"
         should_run=0
@@ -149,8 +250,9 @@ run_cli_loop() {
       help)
         echo "Commands:"
         echo "  [Enter|run]       run design again"
-        echo "  design            ask for prompt, then run"
-        echo "  design <prompt>   run with prompt"
+        echo "  design            ask for prompt, then run with the current stack"
+        echo "  design <prompt>   run with prompt and keep the current stack"
+        echo "  restart           clear saved selections and start from scratch"
         echo "  ls                list files in the invoke directory"
         echo "  pwd               show invoke directory path"
         echo "  letsvibedesign studio  start the UI from your shell"

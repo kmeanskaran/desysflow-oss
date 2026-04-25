@@ -9,8 +9,10 @@ from desysflow_cli.__main__ import (
     default_output_root,
     has_meaningful_source_files,
     infer_dominant_language,
+    render_launcher_state,
     resolve_effective_mode,
     resolve_latest_design_baseline,
+    RunConfig,
 )
 
 
@@ -251,3 +253,34 @@ def test_collect_source_checkpoints_detects_legacy_hidden_baseline(tmp_path: Pat
 
     assert checkpoints.has_existing_design is True
     assert checkpoints.latest_design_version == "v4"
+
+
+def test_render_launcher_state_includes_selected_stack() -> None:
+    cfg = RunConfig(
+        command="/design",
+        source=Path("/tmp/repo"),
+        output_root=Path("/tmp/desysflow"),
+        project="repo",
+        language="python",
+        style="balanced",
+        cloud="aws",
+        web_search="off",
+        mode="refine",
+        effective_mode="refine",
+        focus="add queues",
+        role="Principal Architect",
+        prompt="add queues",
+        non_interactive=True,
+        model_provider="openai",
+        model_name="gpt-4o",
+        api_key="secret",
+        base_url="https://api.openai.com/v1",
+    )
+
+    state = render_launcher_state(cfg)
+
+    assert "DESYSFLOW_LAUNCHER_SOURCE=/tmp/repo" in state
+    assert "DESYSFLOW_LAUNCHER_MODEL_PROVIDER=openai" in state
+    assert "DESYSFLOW_LAUNCHER_MODEL=gpt-4o" in state
+    assert "DESYSFLOW_LAUNCHER_LANGUAGE=python" in state
+    assert "DESYSFLOW_LAUNCHER_ROLE='Principal Architect'" in state

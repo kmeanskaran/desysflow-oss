@@ -13,7 +13,7 @@ Launcher shortcut:
 letsvibedesign
 ```
 
-`letsvibedesign` opens a persistent launcher loop. After each run it returns to a `letsvibe>` prompt instead of exiting immediately.
+`letsvibedesign` opens a persistent launcher loop. After each run it returns to a `letsdesign>` prompt instead of exiting immediately.
 
 ## `design`
 
