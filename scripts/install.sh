@@ -176,6 +176,15 @@ install_repo() {
       log "using existing offline installation: $REPO_DIR"
       return
     fi
+    log "cleaning generated runtime directories for legacy ui -> studio migration"
+    rm -rf \
+      "$REPO_DIR/.venv" \
+      "$REPO_DIR/studio/.vite" \
+      "$REPO_DIR/studio/node_modules" \
+      "$REPO_DIR/studio/dist" \
+      "$REPO_DIR/ui/.vite" \
+      "$REPO_DIR/ui/node_modules" \
+      "$REPO_DIR/ui/dist"
     log "updating repository"
     run_logged "git fetch origin $REPO_REF --depth 1" git -C "$REPO_DIR" fetch origin "$REPO_REF" --depth 1
     run_logged "git checkout -B $REPO_REF origin/$REPO_REF" git -C "$REPO_DIR" checkout -B "$REPO_REF" "origin/$REPO_REF"
