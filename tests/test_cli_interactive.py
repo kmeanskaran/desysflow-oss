@@ -9,6 +9,7 @@ from desysflow_cli.__main__ import (
     default_output_root,
     has_meaningful_source_files,
     infer_dominant_language,
+    parse_run_args,
     render_launcher_state,
     resolve_effective_mode,
     resolve_latest_design_baseline,
@@ -64,6 +65,37 @@ def test_infer_dominant_language_prefers_majority_extensions(tmp_path: Path) -> 
     language = infer_dominant_language(tmp_path, ["python", "typescript", "go", "java", "rust"])
 
     assert language == "python"
+
+
+def test_parse_run_args_accepts_lowercase_language_and_canonicalizes(monkeypatch) -> None:
+    monkeypatch.setattr("desysflow_cli.__main__.resolve_model", lambda cfg: cfg)
+
+    cfg = parse_run_args("/design", ["--language", "python", "--no-interactive"])
+
+    assert cfg.language == "Python"
+
+
+def test_render_launcher_state_preserves_canonical_language_case() -> None:
+    cfg = RunConfig(
+        command="/design",
+        source=Path("/tmp/demo"),
+        output_root=Path("/tmp/demo/desysflow"),
+        project="demo",
+        language="Python",
+        style="balanced",
+        cloud="local",
+        web_search="auto",
+        mode="smart",
+        effective_mode="fresh",
+        focus="",
+        role="DevOps",
+        prompt="",
+        non_interactive=True,
+    )
+
+    state = render_launcher_state(cfg)
+
+    assert "DESYSFLOW_LAUNCHER_LANGUAGE=Python" in state
 
 
 def test_collect_source_checkpoints_empty_repo_has_no_inferred_language(tmp_path: Path) -> None:

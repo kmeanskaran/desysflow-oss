@@ -612,7 +612,7 @@ def finalize_options(cfg: RunConfig) -> RunConfig:
         print(f"  API key  : {'[set]' if cfg.api_key else '[none]'}")
         print("")
 
-    language_choices = cfg_list("languages", ["python", "typescript", "go", "java", "rust"])
+    language_choices = cfg_list("languages", ["Python", "TypeScript", "Go", "Java", "Rust"])
     source_checkpoints = collect_source_checkpoints(
         cfg.source,
         language_choices,
@@ -623,7 +623,13 @@ def finalize_options(cfg: RunConfig) -> RunConfig:
     has_existing_design = source_checkpoints.has_existing_design
 
     defaults = cfg_defaults()
-    language = cfg.language or os.getenv("DESYSFLOW_LANGUAGE", "").strip() or defaults.get("language", "python")
+    language_default = defaults.get("language", language_choices[0] if language_choices else "Python")
+    language = cfg.language or os.getenv("DESYSFLOW_LANGUAGE", "").strip() or language_default
+    language = _canonical_choice(
+        language,
+        language_choices,
+        language_choices[0] if language_choices else "Python",
+    )
     style    = cfg.style    or os.getenv("DESYSFLOW_STYLE", "").strip()    or defaults.get("style", "balanced")
     cloud    = cfg.cloud    or os.getenv("DESYSFLOW_CLOUD", "").strip()    or defaults.get("cloud", "local")
     web      = cfg.web_search or os.getenv("DESYSFLOW_WEB_SEARCH", "").strip() or defaults.get("search_mode", "auto")
@@ -677,6 +683,29 @@ def finalize_options(cfg: RunConfig) -> RunConfig:
 
 def _normalize_choice(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", value.lower())
+
+
+def _canonical_choice(value: str, choices: list[str], fallback: str = "") -> str:
+    if not value:
+        return fallback
+    normalized = _normalize_choice(value)
+    for item in choices:
+        if _normalize_choice(item) == normalized:
+            return item
+    return fallback
+
+
+def _choice_arg(_label: str, choices: list[str]):
+    def _parse(value: str) -> str:
+        canonical = _canonical_choice(value, choices)
+        if canonical:
+            return canonical
+        options = ", ".join(repr(item) for item in choices)
+        raise argparse.ArgumentTypeError(
+            f"invalid choice: {value!r} (choose from {options})"
+        )
+
+    return _parse
 
 
 def _ask_choice(label: str, values: list[str], default: str) -> str:
@@ -803,8 +832,10 @@ def parse_run_args(command: str, argv: list[str] | None = None) -> RunConfig:
     g("--project", default="", metavar="NAME",
       help="Project name (default: source directory name)")
 
+    language_choices = cfg_list("languages", ["Python", "TypeScript", "Go", "Java", "Rust"])
+
     g = parser.add_argument_group("design options").add_argument
-    g("--language", choices=cfg_list("languages", ["python", "typescript", "go", "java", "rust"]),
+    g("--language", choices=language_choices, type=_choice_arg("language", language_choices),
       help="Preferred implementation language")
     g("--style", choices=cfg_list("styles", ["minimal", "balanced", "detailed"]),
       help="Report depth style")
@@ -955,6 +986,7 @@ def has_meaningful_source_files(source: Path) -> bool:
 
 def infer_dominant_language(source: Path, allowed_languages: list[str]) -> str:
     allowed = {item.lower() for item in allowed_languages}
+    canonical_by_key = {item.lower(): item for item in allowed_languages}
     # Preserve caller preference order, but compare case-insensitively.
     allowed_order: dict[str, int] = {}
     for idx, item in enumerate(allowed_languages):
@@ -981,7 +1013,7 @@ def infer_dominant_language(source: Path, allowed_languages: list[str]) -> str:
         counts.items(),
         key=lambda item: (-item[1], allowed_order.get(item[0], len(allowed_order))),
     )
-    return ranked[0][0]
+    return canonical_by_key.get(ranked[0][0], ranked[0][0])
 
 
 def resolve_latest_design_baseline(output_root: Path, project: str) -> DesignBaseline | None:
