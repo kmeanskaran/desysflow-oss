@@ -25,6 +25,7 @@ from services.llm import (
     list_ollama_models,
 )
 from graph.workflow import run_workflow_with_updates
+from utils.codebase_analysis import extract_codebase_context, format_codebase_context
 from utils.design_doc import build_system_design_doc
 from utils.non_technical_doc import build_non_technical_doc
 from utils.workflow_contract import (
@@ -305,6 +306,7 @@ class AnalysisContext:
     stack: dict[str, Any]
     module_map: dict[str, str]
     key_paths: list[str]
+    codebase: dict[str, Any]
     web_enabled: bool
     references: list[dict[str, str]]
     latest_design: DesignBaseline | None
@@ -1453,6 +1455,7 @@ def build_analysis_context(cfg: RunConfig) -> AnalysisContext:
         stack_future = executor.submit(detect_stack, cfg.source)
         module_future = executor.submit(map_modules, cfg.source)
         paths_future = executor.submit(identify_key_paths, cfg.source)
+        codebase_future = executor.submit(extract_codebase_context, cfg.source, skip_dirs=SKIP_DIRS)
         refs_future = executor.submit(best_effort_search, search_query, web_enabled, 5)
         baseline_future = executor.submit(resolve_latest_design_baseline, cfg.output_root, cfg.project)
 
@@ -1461,6 +1464,7 @@ def build_analysis_context(cfg: RunConfig) -> AnalysisContext:
         stack=stack_future.result(),
         module_map=module_future.result(),
         key_paths=paths_future.result(),
+        codebase=codebase_future.result(),
         web_enabled=web_enabled,
         references=refs_future.result(),
         latest_design=baseline_future.result(),
@@ -1497,6 +1501,7 @@ def build_mermaid(ctx: AnalysisContext, cfg: RunConfig) -> str:
 
 def build_user_request(cfg: RunConfig, ctx: AnalysisContext) -> str:
     key_paths = ", ".join(ctx.key_paths[:8]) if ctx.key_paths else "repository root files"
+    codebase_summary = format_codebase_context(ctx.codebase)
     base = [
         f"Role: {cfg.role}",
         f"Project: {cfg.project}",
@@ -1504,6 +1509,7 @@ def build_user_request(cfg: RunConfig, ctx: AnalysisContext) -> str:
         f"Cloud target: {cfg.cloud}",
         f"Design style: {cfg.style}",
         f"Reference paths: {key_paths}",
+        f"Observed codebase structure:\n{codebase_summary}",
     ]
     if cfg.prompt.strip():
         base.append(f"Design request: {cfg.prompt.strip()}")
@@ -1902,6 +1908,7 @@ def render_inventory(ctx: AnalysisContext) -> str:
         f"- `{ext}`: {count}" for ext, count in list(ctx.inventory["extensions"].items())[:12]
     )
     file_lines = "\n".join(f"- `{item}`" for item in ctx.inventory["top_files"])
+    codebase_lines = format_codebase_context(ctx.codebase, file_limit=10, route_limit=10)
     return f"""# SOURCE INVENTORY
 
 - Total files: {ctx.inventory["total_files"]}
@@ -1914,6 +1921,9 @@ def render_inventory(ctx: AnalysisContext) -> str:
 
 ## Representative Files
 {file_lines}
+
+## Extracted Code Symbols
+{codebase_lines}
 """
 
 
@@ -2018,7 +2028,7 @@ This package is intended to help teams move from idea to implementation plan wit
 """
 
 
-def render_hld_from_workflow(cfg: RunConfig, version: str, result: dict[str, Any], user_request: str) -> str:
+def render_hld_from_workflow(cfg: RunConfig, version: str, ctx: AnalysisContext, result: dict[str, Any], user_request: str) -> str:
     hld = result.get("hld_report", {}) or {}
     components = hld.get("components", []) if isinstance(hld.get("components"), list) else []
     data_flow = hld.get("data_flow", []) if isinstance(hld.get("data_flow"), list) else []
@@ -2075,6 +2085,7 @@ def render_hld_from_workflow(cfg: RunConfig, version: str, result: dict[str, Any
         [f"{_safe_text(k)}: {_safe_text(v)}" for k, v in capacity.items()],
         fallback="- Not specified.",
     )
+    codebase_lines = format_codebase_context(ctx.codebase, file_limit=8, route_limit=8)
     return f"""# HLD
 
 ## Overview
@@ -2103,6 +2114,9 @@ def render_hld_from_workflow(cfg: RunConfig, version: str, result: dict[str, Any
 
 ## Components
 {_markdown_table(["Component", "Type", "Responsibility"], component_rows)}
+
+## Observed Codebase
+{codebase_lines}
 
 ## Data Flow
 {data_flow_lines}
@@ -2137,7 +2151,7 @@ def render_hld_from_workflow(cfg: RunConfig, version: str, result: dict[str, Any
 """
 
 
-def render_lld_from_workflow(cfg: RunConfig, result: dict[str, Any]) -> str:
+def render_lld_from_workflow(cfg: RunConfig, ctx: AnalysisContext, result: dict[str, Any]) -> str:
     lld = result.get("lld_report", {}) or {}
     apis = lld.get("api_endpoints", []) if isinstance(lld.get("api_endpoints"), list) else []
     dbs = lld.get("database_schemas", []) if isinstance(lld.get("database_schemas"), list) else []
@@ -2182,6 +2196,7 @@ def render_lld_from_workflow(cfg: RunConfig, result: dict[str, Any]) -> str:
         f"fallback={_safe_text(item.get('fallback'))}"
         for item in errors if isinstance(item, dict)
     ]
+    codebase_lines = format_codebase_context(ctx.codebase, file_limit=10, route_limit=10)
     implementation_notes = [
         f"Preferred language: {_safe_text(requirements.get('preferred_language'), cfg.language)}",
         f"Latency requirement: {_safe_text(requirements.get('latency_requirement'))}",
@@ -2198,6 +2213,9 @@ def render_lld_from_workflow(cfg: RunConfig, result: dict[str, Any]) -> str:
 {_bullet_list(implementation_notes)}
 - Interfaces should stay explicit, testable, and version-safe across service boundaries.
 - Data access paths should prefer clear ownership over implicit cross-service coupling.
+
+## Observed Codebase
+{codebase_lines}
 
 ## APIs
 {_markdown_table(["Method", "Path", "Purpose", "Request", "Response"], api_rows)}
@@ -2277,6 +2295,9 @@ Prompt-driven workflow executed for role `{cfg.role}` and produced architecture 
 - Representative files capped to `TOP_FILE_LIMIT={TOP_FILE_LIMIT}`.
 - Outputs versioned per run to keep diffs small and traceable.
 
+## Repository Grounding
+{format_codebase_context(ctx.codebase, file_limit=12, route_limit=12)}
+
 ## Session Management and Memory
 - Session and run metadata stored in local SQLite.
 - Generated docs stored in versioned filesystem folders.
@@ -2340,8 +2361,8 @@ def render_docs(
 ) -> dict[str, str]:
     if workflow_result:
         docs = {
-            "HLD.md": render_hld_from_workflow(cfg, version, workflow_result, user_request),
-            "LLD.md": render_lld_from_workflow(cfg, workflow_result),
+            "HLD.md": render_hld_from_workflow(cfg, version, ctx, workflow_result, user_request),
+            "LLD.md": render_lld_from_workflow(cfg, ctx, workflow_result),
             "TECHNICAL_REPORT.md": render_technical_report_from_workflow(cfg, ctx, version, workflow_result, user_request),
             "NON_TECHNICAL_DOC.md": render_non_technical_doc_from_workflow(workflow_result),
             "SUMMARY.md": render_summary(cfg, version, ctx),
