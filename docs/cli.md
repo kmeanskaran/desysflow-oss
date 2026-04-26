@@ -3,8 +3,16 @@
 ## Command Summary
 
 ```bash
+desysflow --help
 desysflow design
 desysflow redesign
+```
+
+Equivalent module entrypoint:
+
+```bash
+python -m desysflow_cli --help
+python -m desysflow_cli design
 ```
 
 Launcher shortcut:
@@ -13,14 +21,27 @@ Launcher shortcut:
 letsvibedesign
 ```
 
-`letsvibedesign` opens a persistent launcher loop. After each run it returns to a `letsdesign>` prompt instead of exiting immediately.
+`desysflow` is the package console script. `python -m desysflow_cli` runs the same CLI through the Python module. `letsvibedesign` is a convenience launcher that bootstraps the repo and opens a persistent loop.
+
+If you are running from a local checkout without installing the package globally, use:
+
+```bash
+uv run desysflow design --source .
+```
 
 ## `design`
 
 Generate a versioned design package from current source.
 
 ```bash
-desysflow design --source . --out ./.desysflow --project desysflow-cli
+desysflow design --source . --out ./desysflow --project desysflow-cli
+```
+
+Equivalent forms:
+
+```bash
+uv run desysflow design --source .
+python -m desysflow_cli design --source .
 ```
 
 Non-interactive example:
@@ -28,7 +49,7 @@ Non-interactive example:
 ```bash
 desysflow design \
   --source . \
-  --out ./.desysflow \
+  --out ./desysflow \
   --project desysflow-cli \
   --model-provider ollama \
   --model gpt-oss:20b-cloud \
@@ -43,7 +64,14 @@ desysflow design \
 Compatibility alias for explicit refinement with focus.
 
 ```bash
-desysflow redesign --source . --out ./.desysflow --project desysflow-cli --focus "improve reliability"
+desysflow redesign --source . --out ./desysflow --project desysflow-cli --focus "improve reliability"
+```
+
+Equivalent forms:
+
+```bash
+uv run desysflow redesign --source . --focus "improve reliability"
+python -m desysflow_cli redesign --source . --focus "improve reliability"
 ```
 
 ## Interactive Prompts
@@ -58,7 +86,7 @@ When flags are omitted in an interactive terminal, CLI asks for:
 - web-search mode (`auto`, `on`, `off`)
 - role/persona
 - prompt text immediately for empty repositories
-- optional prompt text for non-empty repositories, including when the repo already has an existing `.desysflow` baseline
+- optional prompt text for non-empty repositories, including when the repo already has an existing `desysflow` baseline
 
 Choices use plain typed/numeric selection.
 For Groq, the CLI can fetch the live model list and let you pick by number when `GROQ_API_KEY` is available.
@@ -66,8 +94,8 @@ For Groq, the CLI can fetch the live model list and let you pick by number when 
 Repository-aware defaults:
 - If the current repository contains source files, CLI detects the dominant language by file extension count and uses that as the default language.
 - If the current repository is empty, CLI directly asks for the product or feature prompt.
-- If the current repository has files or an existing `.desysflow` baseline, CLI lets you leave the prompt blank and continue from the current workspace context.
-- If `--out` is omitted, CLI writes artifacts and local SQLite state under `./.desysflow`.
+- If the current repository has files or an existing `desysflow` baseline, CLI lets you leave the prompt blank and continue from the current workspace context.
+- If `--out` is omitted, CLI writes artifacts and local SQLite state under `./desysflow`.
 
 Launcher loop commands:
 - `Enter` or `run`: run `desysflow design` again with normal interactive prompts
@@ -94,16 +122,16 @@ desysflow design \
 ## Output and Persistence
 
 CLI outputs:
-- `.desysflow/<project>/latest`
-- `.desysflow/<project>/vN/HLD.md`
-- `.desysflow/<project>/vN/LLD.md`
-- `.desysflow/<project>/vN/TECHNICAL_REPORT.md`
-- `.desysflow/<project>/vN/NON_TECHNICAL_DOC.md`
-- `.desysflow/<project>/vN/diagram.mmd`
-- `.desysflow/<project>/vN/DIFF.md`
-- `.desysflow/<project>/vN/METADATA.json`
+- `desysflow/<project>/latest`
+- `desysflow/<project>/vN/HLD.md`
+- `desysflow/<project>/vN/LLD.md`
+- `desysflow/<project>/vN/TECHNICAL_REPORT.md`
+- `desysflow/<project>/vN/NON_TECHNICAL_DOC.md`
+- `desysflow/<project>/vN/diagram.mmd`
+- `desysflow/<project>/vN/DIFF.md`
+- `desysflow/<project>/vN/METADATA.json`
 
 Local storage files:
-- `.desysflow/.desysflow_cli.db`
-- `.desysflow/.desysflow_session.db`
-- `.desysflow/session_artifacts/`
+- `desysflow/.desysflow_cli.db`
+- `desysflow/.desysflow_session.db`
+- `desysflow/session_artifacts/`

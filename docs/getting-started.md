@@ -6,9 +6,11 @@
 - `uv` installed and available in `PATH`
 - Node.js and npm
 
-## 1. Initial Setup
+## 1. Pick an Installation Path
 
-Install globally with the hosted installer:
+### Option A: Hosted installer with launcher
+
+This installs the repo under `~/.letsvibedesign/desysflow-oss` and adds a global `letsvibedesign` command.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/kmeanskaran/desysflow-oss/main/scripts/install.sh | bash
@@ -16,7 +18,9 @@ source ~/.bashrc    # or: source ~/.zshrc
 letsvibedesign
 ```
 
-Or run from a local clone:
+### Option B: Use the installer on a local clone
+
+This keeps your current checkout and installs the same launcher flow.
 
 ```bash
 LETSVIBEDESIGN_LOCAL_REPO="$PWD" LETSVIBEDESIGN_OFFLINE=1 ./scripts/install.sh
@@ -24,13 +28,23 @@ source ~/.bashrc    # or: source ~/.zshrc
 letsvibedesign
 ```
 
-Run the single bootstrap entrypoint:
+### Option C: Run directly from the repo with `uv`
 
 ```bash
-letsvibedesign
+uv sync
+uv run desysflow --help
 ```
 
-This will:
+### Option D: Install the CLI into your active Python environment
+
+```bash
+pip install -e .
+desysflow --help
+```
+
+### What bootstrap prepares
+
+The hosted installer or launcher bootstrap will:
 - Create `.venv`
 - Install Python dependencies
 - Install UI dependencies
@@ -38,25 +52,30 @@ This will:
 - Write local `.env.example`
 - Validate model availability
 
-## 2. Run Modes
+## 2. Understand the Commands
 
 ```bash
 letsvibedesign          # CLI workflow
 letsvibedesign studio   # API + UI
+desysflow design        # direct CLI command
+python -m desysflow_cli design
 ```
 
 Notes:
+- `letsvibedesign` is a launcher wrapper around setup plus the CLI flow.
 - `letsvibedesign` runs the persistent CLI loop and returns to `letsdesign>` after each generation.
 - `studio` runs both services and prints both URLs.
+- `desysflow` is the real console script defined by the package.
+- `python -m desysflow_cli` is the module equivalent of `desysflow`.
 
 ## 3. Backend and UI URLs
 
 - API docs: `http://localhost:8000/docs`
 - UI: `http://localhost:5173`
 
-## 4. Basic CLI Usage
+## 4. Basic Usage
 
-Guided:
+### Guided launcher flow
 
 ```bash
 letsvibedesign
@@ -68,11 +87,27 @@ The launcher stays open after each run and accepts:
 - `design <prompt>` to run directly with that prompt
 - `bye` to exit
 
-Direct:
+### Direct CLI flow
+
+From an installed environment:
 
 ```bash
-desysflow design --source . --out ./.desysflow --project my-project
-desysflow redesign --source . --out ./.desysflow --project my-project --focus "improve reliability"
+desysflow design --source .
+desysflow redesign --source . --focus "improve reliability"
+```
+
+From this repo without installing a global command:
+
+```bash
+uv run desysflow design --source .
+python -m desysflow_cli design --source .
+```
+
+More explicit examples:
+
+```bash
+desysflow design --source . --out ./desysflow --project my-project
+desysflow redesign --source . --out ./desysflow --project my-project --focus "improve reliability"
 ```
 
 ## 5. Basic UI Usage

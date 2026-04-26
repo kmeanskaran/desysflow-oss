@@ -36,7 +36,9 @@ It includes:
 - `uv`
 - Node.js + npm
 
-### One-line install
+### Choose an installation path
+
+#### Option 1: Hosted installer and launcher
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/kmeanskaran/desysflow-oss/main/scripts/install.sh | bash
@@ -46,31 +48,53 @@ letsvibedesign
 
 The installer is intended for macOS, Linux, and WSL2. It clones the repo into `~/.letsvibedesign/desysflow-oss`, bootstraps the local environment, and installs a global `letsvibedesign` launcher into `~/.local/bin`.
 
-For an existing local checkout, skip clone/fetch with:
+#### Option 2: Existing local checkout with the same launcher flow
 
 ```bash
 LETSVIBEDESIGN_LOCAL_REPO="$PWD" LETSVIBEDESIGN_OFFLINE=1 ./scripts/install.sh
-```
-
-### Setup
-
-```bash
+source ~/.bashrc    # or: source ~/.zshrc
 letsvibedesign
 ```
 
-Run directly:
+#### Option 3: Direct CLI from this repo with `uv`
+
+```bash
+uv sync
+uv run desysflow --help
+```
+
+Equivalent module form:
+
+```bash
+python -m desysflow_cli --help
+```
+
+#### Option 4: Install the CLI into your active Python environment
+
+```bash
+pip install -e .
+desysflow --help
+```
+
+## Which command should you use?
+
+- `letsvibedesign`: convenience launcher that bootstraps the repo, then opens the interactive CLI loop
+- `letsvibedesign studio`: convenience launcher that starts the API and UI together
+- `desysflow`: the actual CLI console script defined in `pyproject.toml`
+- `python -m desysflow_cli`: module-based equivalent of `desysflow`
+
+## CLI Usage
+
+### Quick command map
 
 ```bash
 letsvibedesign
 letsvibedesign studio
+uv run desysflow design --source .
+python -m desysflow_cli design --source .
 ```
 
-## Launcher Modes
-
-- `letsvibedesign`: starts the interactive CLI loop for repeated `desysflow design` runs
-- `letsvibedesign studio`: starts API + UI together
-
-## CLI Usage
+### Guided launcher mode
 
 Run the basic guided CLI:
 
@@ -88,11 +112,28 @@ Interactive prompt commands:
 - Any plain text: treated as a prompt and runs design
 - `bye`: exit the CLI loop
 
+### Direct CLI mode
+
+Check the available commands:
+
+```bash
+desysflow --help
+desysflow design --help
+desysflow redesign --help
+```
+
+Run from this repo without installing a global command:
+
+```bash
+uv run desysflow design --source .
+python -m desysflow_cli design --source .
+```
+
 Run directly with flags:
 
 ```bash
-desysflow design --source . --out ./.desysflow --project my-project
-desysflow redesign --source . --out ./.desysflow --project my-project --focus "improve scaling"
+desysflow design --source . --out ./desysflow --project my-project
+desysflow redesign --source . --out ./desysflow --project my-project --focus "improve scaling"
 ```
 
 Run without prompts:
@@ -100,7 +141,7 @@ Run without prompts:
 ```bash
 desysflow design \
   --source . \
-  --out ./.desysflow \
+  --out ./desysflow \
   --project my-project \
   --model-provider ollama \
   --model gpt-oss:20b-cloud \
@@ -114,7 +155,7 @@ Interactive defaults:
 - Empty repositories immediately ask what you want to design.
 - Non-empty repositories detect the dominant codebase language and use it as the default language selection.
 - Non-empty repositories let you add an optional prompt, or press Enter to continue vibe designing from the current codebase or latest baseline.
-- Generated artifacts and local session data are stored in `./.desysflow` by default.
+- Generated artifacts and local session data are stored in `./desysflow` by default.
 
 ## UI Usage
 
@@ -171,7 +212,7 @@ See [Agentic Architecture](docs/agentic-architecture.md) for more detail.
 
 ## Output Structure
 
-DesysFlow writes versioned artifacts to `./.desysflow/<project>/vN/` by default, including:
+DesysFlow writes versioned artifacts to `./desysflow/<project>/vN/` by default, including:
 - `HLD.md`
 - `LLD.md`
 - `TECHNICAL_REPORT.md`
