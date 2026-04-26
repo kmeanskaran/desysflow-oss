@@ -75,10 +75,7 @@ def cfg_providers() -> list[dict[str, str]]:
 
 def default_project_name(source: Path) -> str:
     """Resolve the project folder name for versioned design outputs."""
-    configured = str(cfg_defaults().get("project", "")).strip()
-    if configured:
-        return configured
-    return "desysflow-cli" if source.name == "desysflow-oss" else source.name
+    return source.name.strip() or "current-workspace"
 
 
 def default_output_root(base: Path | None = None) -> Path:
